@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AQual</title>
+    <link rel="stylesheet" href="popup.css" />
+    <script src="popup.js" defer></script>
+  </head>
+  <body>
+    <main class="panel">
+      <header class="app-header">
+        <div class="app-title-group">
+          <div class="app-title">AQual</div>
+          <div class="app-subtitle">Visual accessibility controls</div>
+        </div>
+        <button class="theme-toggle" id="themeToggle" aria-label="Toggle theme">Light</button>
+      </header>
+
+      <div class="tab-bar">
+        <button class="tab-button active" data-tab="visual">Visual</button>
+        <button class="tab-button" data-tab="audio">Audio</button>
+      </div>
+
+      <div class="tab-panel active" id="tab-visual">
+        <details class="group" id="section-reading" open>
+          <summary>Reading &amp; Text</summary>
+
+        <div class="control">
+          <div class="control-info">
+            <div class="control-title">Font family</div>
+            <div class="control-subtitle">Pick a readable font for all text.</div>
+          </div>
+          <div class="control-actions">
+            <select id="fontFamilySelect" class="select"></select>
+            <label class="switch">
+              <input type="checkbox" id="fontEnabled" />
+              <span class="switch-track"></span>
+              <span class="switch-state" id="fontEnabledState">Off</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="control">
+          <div class="control-info">
+            <div class="control-title">Font size</div>
+            <div class="control-subtitle">Scale text for comfortable reading.</div>
+          </div>
+          <div class="control-actions">
+            <div class="range">
+              <input
+                type="range"
+                id="fontSizeRange"
+                min="1"
+                max="100"
+                value="50"
+              />
+              <div class="range-value" id="fontSizeValue">50px</div>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="fontSizeEnabled" />
+              <span class="switch-track"></span>
+              <span class="switch-state" id="fontSizeEnabledState">Off</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="control">
+          <div class="control-info">
+            <div class="control-title">Font color</div>
+            <div class="control-subtitle">Choose a high-contrast text color.</div>
+          </div>
+          <div class="control-actions column">
+            <div class="palette" id="fontColorPalette"></div>
+            <label class="switch">
+              <input type="checkbox" id="fontColorEnabled" />
+              <span class="switch-track"></span>
+              <span class="switch-state" id="fontColorEnabledState">Off</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="control">
+          <div class="control-info">
+            <div class="control-title">Text stroke</div>
+            <div class="control-subtitle">Outline letters for stronger contrast.</div>
+          </div>
+          <div class="control-actions column">
+            <div class="palette" id="textStrokePalette"></div>
+            <label class="switch">
+              <input type="checkbox" id="textStrokeEnabled" />
+              <span class="switch-track"></span>
+              <span class="switch-state" id="textStrokeEnabledState">Off</span>
+            </label>
+          </div>
+        </div>
+        <div class="control">
+          <div class="control-info">
+            <div class="control-title">Reduced text crowding</div>
+            <div class="control-subtitle">Add spacing to improve readability.</div>
+          </div>
+          <div class="control-actions">
+            <label class="switch">
+              <input type="checkbox" id="reducedCrowdingEnabled" />
+              <span class="switch-track"></span>
+              <span class="switch-state" id="reducedCrowdingEnabledState">Off</span>
+            </label>
+          </div>
+        </div>
+        </details>
+
+        <details class="group" id="section-focus" open>
+          <summary>Focus &amp; Clarity</summary>
+
+        <div class="control">
+          <div class="control-info">
+            <div class="control-title">Image veil</div>
+            <div class="control-subtitle">Replace images with alt text boxes.</div>
+          </div>
+          <div class="control-actions">
+            <label class="switch">
+              <input type="checkbox" id="imageVeilEnabled" />
+              <span class="switch-track"></span>
+              <span class="switch-state" id="imageVeilEnabledState">Off</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="control">
+          <div class="control-info">
+            <div class="control-title">Highlight words</div>
+            <div class="control-subtitle">Hover to highlight each word.</div>
+          </div>
+          <div class="control-actions">
+            <label class="switch">
+              <input type="checkbox" id="highlightEnabled" />
+              <span class="switch-track"></span>
+              <span class="switch-state" id="highlightEnabledState">Off</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="control">
+          <div class="control-info">
+            <div class="control-title">Draw on page</div>
+            <div class="control-subtitle">Annotate the page; drawings move with scroll.</div>
+          </div>
+          <div class="control-actions">
+            <label class="switch">
+              <input type="checkbox" id="drawingEnabled" />
+              <span class="switch-track"></span>
+              <span class="switch-state" id="drawingEnabledState">Off</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="control">
+          <div class="control-info">
+            <div class="control-title">Clear drawings</div>
+            <div class="control-subtitle">Remove all annotations on this page.</div>
+          </div>
+          <div class="control-actions">
+            <button class="action-button" id="clearDrawings">Clear</button>
+          </div>
+        </div>
+        </details>
+
+        <details class="group" id="section-images">
+          <summary>Images</summary>
+
+        <div class="control">
+          <div class="control-info">
+            <div class="control-title">Magnifier</div>
+            <div class="control-subtitle">Hover over images to zoom details.</div>
+          </div>
+          <div class="control-actions">
+            <label class="switch">
+              <input type="checkbox" id="magnifierEnabled" />
+              <span class="switch-track"></span>
+              <span class="switch-state" id="magnifierEnabledState">Off</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="control">
+          <div class="control-info">
+            <div class="control-title">Magnifier size</div>
+            <div class="control-subtitle">Adjust the lens diameter.</div>
+          </div>
+          <div class="control-actions">
+            <div class="range">
+              <input
+                type="range"
+                id="magnifierSizeRange"
+                min="20"
+                max="100"
+                step="10"
+                value="50"
+              />
+              <div class="range-value" id="magnifierSizeValue">50px</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="control">
+          <div class="control-info">
+            <div class="control-title">Magnification</div>
+            <div class="control-subtitle">Set the zoom strength.</div>
+          </div>
+          <div class="control-actions">
+            <div class="range">
+              <input
+                type="range"
+                id="magnifierZoomRange"
+                min="1"
+                max="5"
+                step="1"
+                value="3"
+              />
+              <div class="range-value" id="magnifierZoomValue">3x</div>
+            </div>
+          </div>
+        </div>
+        </details>
+
+        <details class="group" id="section-contrast">
+          <summary>Contrast &amp; Light</summary>
+
+        <div class="control">
+          <div class="control-info">
+            <div class="control-title">High contrast</div>
+            <div class="control-subtitle">WCAG-inspired contrast boost for text and images.</div>
+          </div>
+          <div class="control-actions">
+            <label class="switch">
+              <input type="checkbox" id="highContrastEnabled" />
+              <span class="switch-track"></span>
+              <span class="switch-state" id="highContrastEnabledState">Off</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="control">
+          <div class="control-info">
+            <div class="control-title">Adaptive contrast</div>
+            <div class="control-subtitle">Auto-adjust based on page colors.</div>
+          </div>
+          <div class="control-actions">
+            <label class="switch">
+              <input type="checkbox" id="adaptiveContrastEnabled" />
+              <span class="switch-track"></span>
+              <span class="switch-state" id="adaptiveContrastEnabledState">Off</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="control">
+          <div class="control-info">
+            <div class="control-title">Night / reading mode</div>
+            <div class="control-subtitle">Low-vision friendly dark theme.</div>
+          </div>
+          <div class="control-actions">
+            <label class="switch">
+              <input type="checkbox" id="nightModeEnabled" />
+              <span class="switch-track"></span>
+              <span class="switch-state" id="nightModeEnabledState">Off</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="control">
+          <div class="control-info">
+            <div class="control-title">Brightness dimming</div>
+            <div class="control-subtitle">Reduce glare with an overlay.</div>
+          </div>
+          <div class="control-actions column">
+            <div class="range">
+              <input
+                type="range"
+                id="dimmingRange"
+                min="0"
+                max="70"
+                step="5"
+                value="25"
+              />
+              <div class="range-value" id="dimmingValue">25%</div>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="dimmingEnabled" />
+              <span class="switch-track"></span>
+              <span class="switch-state" id="dimmingEnabledState">Off</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="control">
+          <div class="control-info">
+            <div class="control-title">Blue-light filter</div>
+            <div class="control-subtitle">Warm the screen to reduce strain.</div>
+          </div>
+          <div class="control-actions column">
+            <div class="range">
+              <input
+                type="range"
+                id="blueLightRange"
+                min="0"
+                max="60"
+                step="5"
+                value="20"
+              />
+              <div class="range-value" id="blueLightValue">20%</div>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="blueLightEnabled" />
+              <span class="switch-track"></span>
+              <span class="switch-state" id="blueLightEnabledState">Off</span>
+            </label>
+          </div>
+        </div>
+        </details>
+
+        <details class="group" id="section-color">
+          <summary>Color Vision</summary>
+        <div class="control">
+          <div class="control-info">
+            <div class="control-title">Color vision mode</div>
+            <div class="control-subtitle">Adjust hues for specific color blindness.</div>
+          </div>
+          <div class="control-actions">
+            <select id="colorBlindModeSelect" class="select"></select>
+          </div>
+        </div>
+        </details>
+
+        <details class="group" id="section-links">
+          <summary>Links</summary>
+        <div class="control">
+          <div class="control-info">
+            <div class="control-title">Emphasize links</div>
+            <div class="control-subtitle">Add a multi-color underline.</div>
+          </div>
+          <div class="control-actions">
+            <label class="switch">
+              <input type="checkbox" id="linkEmphasisEnabled" />
+              <span class="switch-track"></span>
+              <span class="switch-state" id="linkEmphasisEnabledState">Off</span>
+            </label>
+          </div>
+        </div>
+        </details>
+
+        <details class="group" id="section-pointer">
+          <summary>Pointer</summary>
+        <div class="control">
+          <div class="control-info">
+            <div class="control-title">Cursor style</div>
+            <div class="control-subtitle">Pick a larger, clearer pointer.</div>
+          </div>
+          <div class="control-actions">
+            <select id="cursorTypeSelect" class="select"></select>
+            <label class="switch">
+              <input type="checkbox" id="cursorEnabled" />
+              <span class="switch-track"></span>
+              <span class="switch-state" id="cursorEnabledState">Off</span>
+            </label>
+          </div>
+        </div>
+        </details>
+
+        <details class="group shortcuts" id="section-shortcuts">
+          <summary>Keyboard shortcuts</summary>
+        <div class="shortcut">Image veil: Alt + V</div>
+        <div class="shortcut">Highlight words: Alt + Shift + H</div>
+        <div class="shortcut">Magnifier: Alt + Shift + M</div>
+        <div class="shortcut">Emphasize links: Alt + Shift + E</div>
+        </details>
+
+        <details class="group" id="section-docs">
+          <summary>Documents</summary>
+          <div class="control">
+            <div class="control-info">
+              <div class="control-title">Bionic reading (DOCX)</div>
+              <div class="control-subtitle">Upload a DOCX and open the bionic viewer.</div>
+            </div>
+            <div class="control-actions column">
+              <input class="file-input" type="file" id="docUploadInput" accept=".docx" />
+              <button class="action-button" id="docUploadButton">Upload &amp; Open</button>
+              <div class="status-text" id="docUploadStatus">Waiting for a file.</div>
+            </div>
+          </div>
+        </details>
+
+        <details class="group" id="section-utilities">
+          <summary>Utilities</summary>
+        <div class="control">
+          <div class="control-info">
+            <div class="control-title">Print page</div>
+            <div class="control-subtitle">Open the print dialog for this page.</div>
+          </div>
+          <div class="control-actions">
+            <button class="action-button" id="printPage">Print</button>
+          </div>
+        </div>
+        <div class="control">
+          <div class="control-info">
+            <div class="control-title">Screenshot</div>
+            <div class="control-subtitle">Capture the visible area of the tab.</div>
+          </div>
+          <div class="control-actions">
+            <button class="action-button" id="captureScreenshot">Capture</button>
+          </div>
+        </div>
+        </details>
+
+        <div class="footer">
+          <button class="reset-button" id="toggleSections">Expand all</button>
+          <button class="reset-button" id="resetDefaults">Reset to defaults</button>
+        </div>
+      </div>
+
+      <div class="tab-panel" id="tab-audio">
+        <div class="audio-card">
+          <div class="audio-header">
+            <div>
+              <div class="audio-title">Live Transcription</div>
+              <div class="audio-subtitle">ElevenLabs or Local Whisper</div>
+            </div>
+            <div class="audio-status">
+              <span id="audioStatusText">Idle</span>
+            </div>
+          </div>
+
+          <div class="audio-modes">
+            <button class="mode-button active" data-mode="elevenlabs">ElevenLabs</button>
+            <button class="mode-button" data-mode="local">Local Whisper</button>
+          </div>
+
+          <div class="audio-permission">
+            <button class="ghost-button" id="audioPermission">Grant microphone access</button>
+            <div class="audio-permission-note" id="audioPermissionNote">
+              If mic access is blocked, open the permission page to grant it.
+            </div>
+          </div>
+
+          <div class="audio-controls">
+            <button class="action-button audio-start" id="audioStart">Start</button>
+            <button class="action-button audio-stop" id="audioStop" disabled>Stop</button>
+          </div>
+
+          <canvas id="audioVisualizer" class="audio-visualizer"></canvas>
+
+          <div class="audio-transcript" id="audioTranscript">Waiting for speech...</div>
+
+        </div>
+      </div>
+    </main>
+  </body>
+</html>
