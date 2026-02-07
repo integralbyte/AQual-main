@@ -1,0 +1,39 @@
+@font-face {
+  font-family: "Aqual Impact";
+  font-style: normal;
+  font-weight: 400;
+  src: url("chrome-extension://__MSG_@@extension_id__/assets/fonts/Impact-Regular.ttf") format("truetype");
+}
+
+p,
+a,
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+li,
+span,
+strong,
+em,
+b,
+i,
+small,
+label,
+input,
+textarea,
+button,
+th,
+td,
+caption,
+figcaption,
+blockquote,
+dd,
+dt,
+code,
+pre {
+  font-family: "Aqual Impact" !important;
+  word-spacing: 0.22em;
+  letter-spacing: 0.02em;
+}
