@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AQual Microphone Access</title>
+  <link rel="stylesheet" href="mic-permission.css" />
+</head>
+<body>
+  <main class="card">
+    <h1>Microphone Access</h1>
+    <p class="subtitle">Grant AQual permission to use your microphone for live transcription.</p>
+
+    <div class="status" id="status">Ready to request access.</div>
+
+    <button id="grantAccess" class="primary">Grant Microphone Access</button>
+    <button id="closePage" class="ghost">Close this tab</button>
+
+    <p class="note">
+      If you accidentally dismissed the prompt, click the button again and choose Allow.
+    </p>
+  </main>
+
+  <script src="mic-permission.js"></script>
+</body>
+</html>
