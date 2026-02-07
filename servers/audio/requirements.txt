@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+websockets
+mlx-whisper
+webrtcvad
+numpy
+httpx

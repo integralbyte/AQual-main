@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AQual Audio Server</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #0b0b0b;
+      --panel: #141414;
+      --text: #f5f5f5;
+      --muted: #b3b3b3;
+      --accent: #22d3ee;
+      --border: #2a2a2a;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      font-family: "Atkinson Hyperlegible", "IBM Plex Sans", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 32px;
+    }
+    main {
+      width: min(720px, 100%);
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 28px;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.4);
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 1.6rem;
+      letter-spacing: 0.2px;
+    }
+    p {
+      margin: 0 0 16px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    ul {
+      list-style: none;
+      padding: 0;
+      margin: 0 0 16px;
+      display: grid;
+      gap: 10px;
+    }
+    li {
+      padding: 10px 12px;
+      background: #0f0f0f;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      font-size: 0.98rem;
+    }
+    code {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      color: var(--accent);
+      background: #0c1a1e;
+      padding: 2px 6px;
+      border-radius: 6px;
+      border: 1px solid #13313a;
+    }
+    .note {
+      border-left: 3px solid var(--accent);
+      padding-left: 12px;
+      color: var(--text);
+      font-size: 0.95rem;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>AQual Audio Server</h1>
+    <p>This service powers the AQual extension's Audio tab.</p>
+    <ul>
+      <li><span>Local Whisper:</span> <code>ws://localhost:8000/ws/audio</code></li>
+      <li><span>ElevenLabs Proxy:</span> <code>ws://localhost:8000/ws/elevenlabs</code></li>
+      <li><span>Token Endpoint:</span> <code>http://localhost:8000/api/token</code></li>
+    </ul>
+    <p class="note">Keep this server running while using live transcription in AQual.</p>
+  </main>
+</body>
+</html>
