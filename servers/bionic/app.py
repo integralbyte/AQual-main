@@ -1,0 +1,777 @@
+from flask import Flask, request, jsonify, render_template
+from werkzeug.utils import secure_filename
+from docx import Document
+from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
+from docx.shared import Pt
+from docx.oxml.ns import nsmap
+import re
+import io
+import html
+import json
+import base64
+from google import genai
+from google.genai import types
+
+app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+
+GEMINI_API_KEY = "REDACTED_GCP_API_KEY"
+
+# Store images temporarily for the session
+image_store = {}
+
+
+class BionicHtmlConverter:
+    """Converts DOCX files to HTML with bionic reading formatting."""
+
+    # XML namespaces used in DOCX
+    NSMAP = {
+        'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
+        'r': 'http://schemas.openxmlformats.org/officeDocument/2006/relationships',
+        'a': 'http://schemas.openxmlformats.org/drawingml/2006/main',
+    }
+
+    def __init__(self, doc_id=None):
+        self.css_classes = set()
+        self.doc_id = doc_id
+        self.image_counter = 0
+        self.doc = None  # Will be set during convert
+
+    def _get_fixation_length(self, word):
+        """Calculates how many characters to bold for bionic reading."""
+        clean_word = re.sub(r'\W+', '', word)
+        length = len(clean_word)
+        if length <= 1:
+            return 1
+        elif length <= 3:
+            return int(length * 0.6) + 1
+        else:
+            return int(length * 0.45) + 1
+
+    def _apply_bionic_to_text(self, text, is_already_bold=False):
+        """Apply bionic reading formatting to text, returning HTML."""
+        if is_already_bold:
+            return f'<strong>{html.escape(text)}</strong>'
+
+        parts = re.split(r'(\s+)', text)
+        result = []
+
+        for part in parts:
+            if not part.strip() or not any(c.isalnum() for c in part):
+                result.append(html.escape(part))
+            else:
+                fixation = self._get_fixation_length(part)
+                bold_segment = html.escape(part[:fixation])
+                normal_segment = html.escape(part[fixation:]) if len(part) > fixation else ''
+                result.append(f'<strong class="bionic">{bold_segment}</strong>{normal_segment}')
+
+        return ''.join(result)
+
+    def _get_run_style(self, run):
+        """Extract inline styles from a run."""
+        styles = []
+
+        if run.italic:
+            styles.append('font-style: italic')
+        if run.underline:
+            styles.append('text-decoration: underline')
+        if run.font.color and run.font.color.rgb:
+            rgb = run.font.color.rgb
+            styles.append(f'color: #{rgb}')
+        if run.font.size:
+            pt_size = run.font.size.pt
+            styles.append(f'font-size: {pt_size}pt')
+        if run.font.name:
+            styles.append(f'font-family: "{run.font.name}", sans-serif')
+
+        return '; '.join(styles) if styles else None
+
+    def _get_hyperlink_url(self, hyperlink_elem):
+        """Extract URL from a hyperlink element."""
+        r_id = hyperlink_elem.get(f'{{{self.NSMAP["r"]}}}id')
+        if r_id and self.doc:
+            try:
+                rel = self.doc.part.rels.get(r_id)
+                if rel and rel.target_ref:
+                    return rel.target_ref
+            except Exception:
+                pass
+        return None
+
+    def _process_run(self, run, hyperlink_url=None):
+        """Process a single run and return HTML."""
+        text = run.text
+        if not text:
+            return ''
+
+        style = self._get_run_style(run)
+        style_attr = f' style="{style}"' if style else ''
+
+        is_bold = run.bold is True
+        bionic_html = self._apply_bionic_to_text(text, is_bold)
+
+        if style:
+            bionic_html = f'<span{style_attr}>{bionic_html}</span>'
+
+        if hyperlink_url:
+            return f'<a href="{html.escape(hyperlink_url)}" class="doc-link" target="_blank">{bionic_html}</a>'
+
+        return bionic_html
+
+    def _process_paragraph_content(self, paragraph):
+        """Process paragraph content including hyperlinks."""
+        content_parts = []
+        p_elem = paragraph._p
+
+        # Iterate through child elements to preserve order and detect hyperlinks
+        for child in p_elem:
+            tag = child.tag.split('}')[-1] if '}' in child.tag else child.tag
+
+            if tag == 'r':  # Regular run
+                # Find the corresponding run object
+                for run in paragraph.runs:
+                    if run._r == child:
+                        content_parts.append(self._process_run(run))
+                        break
+
+            elif tag == 'hyperlink':  # Hyperlink
+                url = self._get_hyperlink_url(child)
+                # Process runs inside the hyperlink
+                for r_elem in child.findall(f'{{{self.NSMAP["w"]}}}r'):
+                    # Get text from the run
+                    text_elems = r_elem.findall(f'{{{self.NSMAP["w"]}}}t')
+                    for t_elem in text_elems:
+                        if t_elem.text:
+                            # Check for bold
+                            rPr = r_elem.find(f'{{{self.NSMAP["w"]}}}rPr')
+                            is_bold = False
+                            if rPr is not None:
+                                bold_elem = rPr.find(f'{{{self.NSMAP["w"]}}}b')
+                                is_bold = bold_elem is not None
+
+                            bionic_text = self._apply_bionic_to_text(t_elem.text, is_bold)
+                            if url:
+                                content_parts.append(f'<a href="{html.escape(url)}" class="doc-link" target="_blank">{bionic_text}</a>')
+                            else:
+                                content_parts.append(bionic_text)
+
+        # Fallback if no content was extracted (handles simple paragraphs)
+        if not content_parts:
+            for run in paragraph.runs:
+                content_parts.append(self._process_run(run))
+
+        return ''.join(content_parts)
+
+    def _get_list_info(self, paragraph):
+        """Get list numbering info (type and level) from paragraph."""
+        p_elem = paragraph._p
+        numPr = p_elem.find(f'.//{{{self.NSMAP["w"]}}}numPr')
+
+        if numPr is None:
+            # Check style for list
+            style_name = paragraph.style.name.lower() if paragraph.style else ''
+            if 'list' in style_name:
+                return {'is_list': True, 'level': 0, 'is_ordered': 'number' in style_name or 'decimal' in style_name}
+            return None
+
+        ilvl_elem = numPr.find(f'{{{self.NSMAP["w"]}}}ilvl')
+        numId_elem = numPr.find(f'{{{self.NSMAP["w"]}}}numId')
+
+        level = int(ilvl_elem.get(f'{{{self.NSMAP["w"]}}}val', 0)) if ilvl_elem is not None else 0
+        num_id = numId_elem.get(f'{{{self.NSMAP["w"]}}}val') if numId_elem is not None else None
+
+        # Try to determine if ordered or unordered from numbering definitions
+        is_ordered = False
+        if num_id and self.doc:
+            try:
+                numbering_part = self.doc.part.numbering_part
+                if numbering_part:
+                    # Check the abstract numbering for this numId
+                    numbering_xml = numbering_part._element
+                    for num in numbering_xml.findall(f'.//{{{self.NSMAP["w"]}}}num'):
+                        if num.get(f'{{{self.NSMAP["w"]}}}numId') == num_id:
+                            abstract_id = num.find(f'{{{self.NSMAP["w"]}}}abstractNumId')
+                            if abstract_id is not None:
+                                abs_id = abstract_id.get(f'{{{self.NSMAP["w"]}}}val')
+                                for abstract in numbering_xml.findall(f'.//{{{self.NSMAP["w"]}}}abstractNum'):
+                                    if abstract.get(f'{{{self.NSMAP["w"]}}}abstractNumId') == abs_id:
+                                        for lvl in abstract.findall(f'{{{self.NSMAP["w"]}}}lvl'):
+                                            if lvl.get(f'{{{self.NSMAP["w"]}}}ilvl') == str(level):
+                                                numFmt = lvl.find(f'{{{self.NSMAP["w"]}}}numFmt')
+                                                if numFmt is not None:
+                                                    fmt = numFmt.get(f'{{{self.NSMAP["w"]}}}val', '')
+                                                    is_ordered = fmt in ('decimal', 'lowerLetter', 'upperLetter', 'lowerRoman', 'upperRoman')
+                                                break
+                                        break
+                            break
+            except Exception:
+                pass
+
+        return {'is_list': True, 'level': level, 'is_ordered': is_ordered, 'num_id': num_id}
+
+    def _get_paragraph_indent(self, paragraph):
+        """Get paragraph indentation in ems."""
+        p_elem = paragraph._p
+        pPr = p_elem.find(f'{{{self.NSMAP["w"]}}}pPr')
+        if pPr is None:
+            return 0
+
+        ind = pPr.find(f'{{{self.NSMAP["w"]}}}ind')
+        if ind is None:
+            return 0
+
+        # Get left indentation in twips (1/20 of a point)
+        left = ind.get(f'{{{self.NSMAP["w"]}}}left') or ind.get(f'{{{self.NSMAP["w"]}}}start') or '0'
+        try:
+            twips = int(left)
+            # Convert to approximate ems (720 twips = 0.5 inch ≈ 2em)
+            return round(twips / 360, 1)
+        except ValueError:
+            return 0
+
+    def _get_paragraph_tag_and_class(self, paragraph):
+        """Determine the appropriate HTML tag based on paragraph style."""
+        style_name = paragraph.style.name.lower() if paragraph.style else ''
+
+        if 'heading 1' in style_name:
+            return 'h1', 'doc-heading doc-h1'
+        elif 'heading 2' in style_name:
+            return 'h2', 'doc-heading doc-h2'
+        elif 'heading 3' in style_name:
+            return 'h3', 'doc-heading doc-h3'
+        elif 'heading 4' in style_name:
+            return 'h4', 'doc-heading doc-h4'
+        elif 'heading 5' in style_name:
+            return 'h5', 'doc-heading doc-h5'
+        elif 'heading 6' in style_name:
+            return 'h6', 'doc-heading doc-h6'
+        elif 'title' in style_name:
+            return 'h1', 'doc-title'
+        elif 'subtitle' in style_name:
+            return 'h2', 'doc-subtitle'
+        else:
+            return 'p', 'doc-paragraph'
+
+    def _get_alignment_style(self, paragraph):
+        """Get CSS text-align from paragraph alignment."""
+        alignment = paragraph.alignment
+        if alignment == WD_PARAGRAPH_ALIGNMENT.CENTER:
+            return 'text-align: center'
+        elif alignment == WD_PARAGRAPH_ALIGNMENT.RIGHT:
+            return 'text-align: right'
+        elif alignment == WD_PARAGRAPH_ALIGNMENT.JUSTIFY:
+            return 'text-align: justify'
+        return None
+
+    def _process_paragraph(self, paragraph, skip_list_check=False):
+        """Process a paragraph and return HTML."""
+        text = paragraph.text.strip()
+        if not text:
+            return '<p class="doc-paragraph">&nbsp;</p>'
+
+        # Check for list
+        if not skip_list_check:
+            list_info = self._get_list_info(paragraph)
+            if list_info:
+                return None  # Will be handled by list processing
+
+        tag, css_class = self._get_paragraph_tag_and_class(paragraph)
+        alignment = self._get_alignment_style(paragraph)
+        indent = self._get_paragraph_indent(paragraph)
+
+        content = self._process_paragraph_content(paragraph)
+
+        styles = []
+        if alignment:
+            styles.append(alignment)
+        if indent > 0:
+            styles.append(f'margin-left: {indent}em')
+
+        style_attr = f' style="{"; ".join(styles)}"' if styles else ''
+
+        return f'<{tag} class="{css_class}"{style_attr}>{content}</{tag}>'
+
+    def _extract_images_from_paragraph(self, paragraph, doc):
+        """Extract images from a paragraph and return HTML for them."""
+        images_html = []
+
+        # Look for drawings in the paragraph XML
+        for run in paragraph.runs:
+            run_xml = run._r
+            drawings = run_xml.findall('.//' + '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}drawing')
+
+            for drawing in drawings:
+                # Find the blip element which contains the image reference
+                blips = drawing.findall('.//' + '{http://schemas.openxmlformats.org/drawingml/2006/main}blip')
+
+                for blip in blips:
+                    embed_id = blip.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed')
+                    if embed_id:
+                        try:
+                            image_part = doc.part.related_parts.get(embed_id)
+                            if image_part:
+                                image_bytes = image_part.blob
+                                content_type = image_part.content_type
+
+                                # Generate image ID
+                                img_id = f"{self.doc_id}_{self.image_counter}"
+                                self.image_counter += 1
+
+                                # Store image data
+                                image_store[img_id] = {
+                                    'data': base64.b64encode(image_bytes).decode('utf-8'),
+                                    'content_type': content_type
+                                }
+
+                                # Create base64 data URL for display
+                                data_url = f"data:{content_type};base64,{base64.b64encode(image_bytes).decode('utf-8')}"
+
+                                images_html.append(
+                                    f'<div class="doc-image-container">'
+                                    f'<img src="{data_url}" class="doc-image" data-image-id="{img_id}" alt="Document image">'
+                                    f'<div class="image-description" style="display:none;"></div>'
+                                    f'</div>'
+                                )
+                        except Exception:
+                            pass
+
+        return images_html
+
+    def _process_table(self, table):
+        """Process a table and return HTML."""
+        rows_html = []
+
+        for row in table.rows:
+            cells_html = []
+            for cell in row.cells:
+                cell_content = []
+                for paragraph in cell.paragraphs:
+                    if paragraph.text.strip():
+                        # For table cells, we process inline without the paragraph wrapper
+                        parts = []
+                        for run in paragraph.runs:
+                            parts.append(self._process_run(run))
+                        cell_content.append(''.join(parts))
+                    else:
+                        cell_content.append('&nbsp;')
+
+                cells_html.append(f'<td class="doc-table-cell">{"<br>".join(cell_content)}</td>')
+
+            rows_html.append(f'<tr>{"".join(cells_html)}</tr>')
+
+        return f'<table class="doc-table"><tbody>{"".join(rows_html)}</tbody></table>'
+
+    def convert(self, docx_file):
+        """Convert a DOCX file to HTML with bionic reading formatting."""
+        doc = Document(docx_file)
+        self.doc = doc  # Store reference for helper methods
+        html_parts = []
+
+        # Track list state for proper nested list handling
+        # Stack holds tuples of (is_ordered, level)
+        list_stack = []
+        current_list_items = []
+
+        def close_lists_to_level(target_level):
+            """Close nested lists down to target level."""
+            nonlocal list_stack, current_list_items
+            while list_stack and list_stack[-1][1] >= target_level:
+                is_ordered, level = list_stack.pop()
+                tag = 'ol' if is_ordered else 'ul'
+                if current_list_items:
+                    list_html = f'<{tag} class="doc-list doc-list-level-{level}">{"".join(current_list_items)}</{tag}>'
+                    if list_stack:
+                        # Nest inside parent list item
+                        current_list_items = [list_html]
+                    else:
+                        html_parts.append(list_html)
+                        current_list_items = []
+
+        def close_all_lists():
+            """Close all open lists."""
+            nonlocal list_stack, current_list_items
+            while list_stack:
+                is_ordered, level = list_stack.pop()
+                tag = 'ol' if is_ordered else 'ul'
+                if current_list_items:
+                    list_html = f'<{tag} class="doc-list doc-list-level-{level}">{"".join(current_list_items)}</{tag}>'
+                    if list_stack:
+                        current_list_items = [list_html]
+                    else:
+                        html_parts.append(list_html)
+                        current_list_items = []
+
+        for element in doc.element.body:
+            # Check if it's a paragraph
+            if element.tag.endswith('p'):
+                for paragraph in doc.paragraphs:
+                    if paragraph._p == element:
+                        # Extract any images from this paragraph
+                        images = self._extract_images_from_paragraph(paragraph, doc)
+                        for img_html in images:
+                            close_all_lists()
+                            html_parts.append(img_html)
+
+                        # Check for list formatting
+                        list_info = self._get_list_info(paragraph)
+
+                        if list_info:
+                            level = list_info['level']
+                            is_ordered = list_info['is_ordered']
+
+                            # Handle list level changes
+                            if not list_stack:
+                                # Starting a new list
+                                list_stack.append((is_ordered, level))
+                                current_list_items = []
+                            elif level > list_stack[-1][1]:
+                                # Going deeper - start nested list
+                                list_stack.append((is_ordered, level))
+                            elif level < list_stack[-1][1]:
+                                # Going up - close nested lists
+                                while list_stack and list_stack[-1][1] > level:
+                                    old_ordered, old_level = list_stack.pop()
+                                    tag = 'ol' if old_ordered else 'ul'
+                                    if current_list_items:
+                                        nested_html = f'<{tag} class="doc-list doc-list-level-{old_level}">{"".join(current_list_items)}</{tag}>'
+                                        current_list_items = [f'<li class="doc-list-item">{nested_html}</li>']
+
+                                if not list_stack:
+                                    list_stack.append((is_ordered, level))
+
+                            # Process list item content using the hyperlink-aware method
+                            if paragraph.text.strip():
+                                content = self._process_paragraph_content(paragraph)
+                                indent = self._get_paragraph_indent(paragraph)
+                                style = f' style="margin-left: {indent}em"' if indent > 0 else ''
+                                current_list_items.append(f'<li class="doc-list-item"{style}>{content}</li>')
+                        else:
+                            # Not a list item - close any open lists
+                            close_all_lists()
+
+                            if paragraph.text.strip():
+                                para_html = self._process_paragraph(paragraph, skip_list_check=True)
+                                if para_html:
+                                    html_parts.append(para_html)
+                        break
+
+            # Check if it's a table
+            elif element.tag.endswith('tbl'):
+                close_all_lists()
+
+                for table in doc.tables:
+                    if table._tbl == element:
+                        html_parts.append(self._process_table(table))
+                        break
+
+        # Close any remaining open lists
+        close_all_lists()
+
+        return '\n'.join(html_parts)
+
+
+@app.route('/')
+def index():
+    """Serve the main page."""
+    return render_template('index.html')
+
+
+@app.route('/convert', methods=['POST'])
+def convert_docx():
+    """Handle DOCX file upload and conversion."""
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file provided'}), 400
+
+    file = request.files['file']
+
+    if file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
+
+    if not file.filename.lower().endswith('.docx'):
+        return jsonify({'error': 'Only DOCX files are supported'}), 400
+
+    try:
+        # Read file into memory
+        file_bytes = io.BytesIO(file.read())
+
+        # Generate a unique document ID for image storage
+        import uuid
+        doc_id = str(uuid.uuid4())[:8]
+
+        # Convert to HTML with bionic reading
+        converter = BionicHtmlConverter(doc_id=doc_id)
+        html_content = converter.convert(file_bytes)
+
+        return jsonify({
+            'success': True,
+            'html': html_content,
+            'filename': secure_filename(file.filename),
+            'docId': doc_id
+        })
+
+    except Exception as e:
+        return jsonify({'error': f'Failed to process document: {str(e)}'}), 500
+
+
+@app.route('/summarize', methods=['POST'])
+def summarize_paragraph():
+    """Summarize a paragraph into bullet points using Gemini."""
+    data = request.get_json()
+    if not data or 'text' not in data:
+        return jsonify({'error': 'No text provided'}), 400
+
+    text = data['text'].strip()
+    if not text:
+        return jsonify({'error': 'Empty text'}), 400
+
+    try:
+        client = genai.Client(api_key=GEMINI_API_KEY)
+
+        prompt = f"""Summarize the following paragraph into concise bullet points.
+Return ONLY valid JSON in this exact format, nothing else:
+{{"bullets": ["point 1", "point 2", "point 3"]}}
+
+Paragraph:
+{text}"""
+
+        contents = [
+            types.Content(
+                role="user",
+                parts=[
+                    types.Part.from_text(text=prompt),
+                ],
+            ),
+        ]
+
+        generate_content_config = types.GenerateContentConfig(
+            thinking_config=types.ThinkingConfig(
+                thinking_level="HIGH",
+            ),
+        )
+
+        response_text = ""
+        for chunk in client.models.generate_content_stream(
+            model="gemini-3-flash-preview",
+            contents=contents,
+            config=generate_content_config,
+        ):
+            if chunk.text:
+                response_text += chunk.text
+
+        response_text = response_text.strip()
+
+        # Clean up response - remove markdown code blocks if present
+        if response_text.startswith("```"):
+            lines = response_text.split("\n")
+            response_text = "\n".join(lines[1:-1] if lines[-1] == "```" else lines[1:])
+
+        result = json.loads(response_text)
+        return jsonify(result)
+
+    except json.JSONDecodeError:
+        return jsonify({'error': 'Failed to parse AI response'}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/rephrase', methods=['POST'])
+def rephrase_paragraph():
+    """Rephrase a paragraph using Gemini, optionally matching a writing style."""
+    data = request.get_json()
+    if not data or 'text' not in data:
+        return jsonify({'error': 'No text provided'}), 400
+
+    text = data['text'].strip()
+    if not text:
+        return jsonify({'error': 'Empty text'}), 400
+
+    writing_sample = data.get('writingSample', '').strip()
+
+    try:
+        client = genai.Client(api_key=GEMINI_API_KEY)
+
+        if writing_sample:
+            prompt = f"""You are a writing assistant. Rephrase the following paragraph to match the writing style, vocabulary level, and tone of the provided writing sample.
+
+WRITING SAMPLE (match this style):
+{writing_sample}
+
+PARAGRAPH TO REPHRASE:
+{text}
+
+Return ONLY valid JSON in this exact format, nothing else:
+{{
+  "rephrased": "the rephrased paragraph here",
+  "terms": [
+    {{"word": "difficult word", "definition": "simple definition"}},
+    {{"word": "another term", "definition": "its definition"}}
+  ]
+}}
+
+The "terms" array should contain any words or phrases in your rephrased text that might be unfamiliar or technical to a general reader. Keep definitions concise (under 15 words)."""
+        else:
+            prompt = f"""You are a writing assistant. Rephrase the following paragraph to make it clearer and easier to understand while preserving the original meaning. Use simpler vocabulary where possible, but don't oversimplify technical concepts.
+
+PARAGRAPH TO REPHRASE:
+{text}
+
+Return ONLY valid JSON in this exact format, nothing else:
+{{
+  "rephrased": "the rephrased paragraph here",
+  "terms": [
+    {{"word": "difficult word", "definition": "simple definition"}},
+    {{"word": "another term", "definition": "its definition"}}
+  ]
+}}
+
+The "terms" array should contain any words or phrases in your rephrased text that might be unfamiliar or technical to a general reader. Keep definitions concise (under 15 words). If there are no difficult terms, return an empty array."""
+
+        contents = [
+            types.Content(
+                role="user",
+                parts=[
+                    types.Part.from_text(text=prompt),
+                ],
+            ),
+        ]
+
+        generate_content_config = types.GenerateContentConfig(
+            thinking_config=types.ThinkingConfig(
+                thinking_level="HIGH",
+            ),
+        )
+
+        response_text = ""
+        for chunk in client.models.generate_content_stream(
+            model="gemini-3-flash-preview",
+            contents=contents,
+            config=generate_content_config,
+        ):
+            if chunk.text:
+                response_text += chunk.text
+
+        response_text = response_text.strip()
+
+        # Clean up response - remove markdown code blocks if present
+        if response_text.startswith("```"):
+            lines = response_text.split("\n")
+            response_text = "\n".join(lines[1:-1] if lines[-1] == "```" else lines[1:])
+
+        result = json.loads(response_text)
+        return jsonify(result)
+
+    except json.JSONDecodeError:
+        return jsonify({'error': 'Failed to parse AI response'}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/extract-text', methods=['POST'])
+def extract_text():
+    """Extract text from uploaded DOCX file for writing sample."""
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file provided'}), 400
+
+    file = request.files['file']
+
+    if file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
+
+    if not file.filename.lower().endswith('.docx'):
+        return jsonify({'error': 'Only DOCX files are supported'}), 400
+
+    try:
+        file_bytes = io.BytesIO(file.read())
+        doc = Document(file_bytes)
+
+        text_parts = []
+        for paragraph in doc.paragraphs:
+            if paragraph.text.strip():
+                text_parts.append(paragraph.text.strip())
+
+        # Limit to first ~2000 words for context
+        full_text = '\n\n'.join(text_parts)
+        words = full_text.split()
+        if len(words) > 2000:
+            full_text = ' '.join(words[:2000]) + '...'
+
+        return jsonify({
+            'success': True,
+            'text': full_text,
+            'filename': secure_filename(file.filename)
+        })
+
+    except Exception as e:
+        return jsonify({'error': f'Failed to extract text: {str(e)}'}), 500
+
+
+@app.route('/describe-image', methods=['POST'])
+def describe_image():
+    """Generate an accessibility description for an image using Gemini."""
+    data = request.get_json()
+    if not data or 'imageId' not in data:
+        return jsonify({'error': 'No image ID provided'}), 400
+
+    image_id = data['imageId']
+    if image_id not in image_store:
+        return jsonify({'error': 'Image not found'}), 404
+
+    image_data = image_store[image_id]
+
+    try:
+        client = genai.Client(api_key=GEMINI_API_KEY)
+
+        prompt = """Describe this image for a visually impaired person. Provide a clear, detailed description that captures:
+1. The main subject or content of the image
+2. Important visual details (colors, layout, text if any)
+3. The context or purpose of the image in a document
+
+Keep the description concise but informative (2-4 sentences). Return ONLY valid JSON in this exact format:
+{"description": "Your description here"}"""
+
+        contents = [
+            types.Content(
+                role="user",
+                parts=[
+                    types.Part.from_bytes(
+                        data=base64.b64decode(image_data['data']),
+                        mime_type=image_data['content_type']
+                    ),
+                    types.Part.from_text(text=prompt),
+                ],
+            ),
+        ]
+
+        generate_content_config = types.GenerateContentConfig(
+            thinking_config=types.ThinkingConfig(
+                thinking_level="HIGH",
+            ),
+        )
+
+        response_text = ""
+        for chunk in client.models.generate_content_stream(
+            model="gemini-3-flash-preview",
+            contents=contents,
+            config=generate_content_config,
+        ):
+            if chunk.text:
+                response_text += chunk.text
+
+        response_text = response_text.strip()
+
+        # Clean up response - remove markdown code blocks if present
+        if response_text.startswith("```"):
+            lines = response_text.split("\n")
+            response_text = "\n".join(lines[1:-1] if lines[-1] == "```" else lines[1:])
+
+        result = json.loads(response_text)
+        return jsonify(result)
+
+    except json.JSONDecodeError:
+        return jsonify({'error': 'Failed to parse AI response'}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+if __name__ == '__main__':
+    app.run(debug=True, port=8080)
