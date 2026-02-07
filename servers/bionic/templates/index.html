@@ -1,0 +1,1559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bionic Reader</title>
+    <link href="https://fonts.cdnfonts.com/css/opendyslexic" rel="stylesheet">
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            min-height: 100vh;
+        }
+
+        .upload-screen {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+        }
+
+        .upload-screen.hidden {
+            display: none;
+        }
+
+        .upload-container {
+            max-width: 480px;
+            width: 100%;
+        }
+
+        .upload-container h1 {
+            font-size: 1.5rem;
+            font-weight: 500;
+            margin-bottom: 0.5rem;
+            color: #fff;
+        }
+
+        .upload-container > p {
+            color: #888;
+            font-size: 0.875rem;
+            margin-bottom: 2rem;
+        }
+
+        .upload-zone {
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 3rem 2rem;
+            text-align: center;
+            transition: border-color 0.2s, background 0.2s;
+            cursor: pointer;
+            background: #222;
+        }
+
+        .upload-zone:hover {
+            border-color: #555;
+            background: #282828;
+        }
+
+        .upload-zone.drag-over {
+            border-color: #fff;
+            background: #2a2a2a;
+        }
+
+        .upload-zone input {
+            display: none;
+        }
+
+        .upload-label {
+            font-size: 0.9rem;
+            color: #aaa;
+            margin-bottom: 1rem;
+            display: block;
+        }
+
+        .upload-btn {
+            display: inline-block;
+            background: #fff;
+            color: #000;
+            padding: 0.625rem 1.25rem;
+            border: none;
+            border-radius: 6px;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+
+        .upload-btn:hover {
+            opacity: 0.9;
+        }
+
+        .error-msg {
+            background: #3d1f1f;
+            border: 1px solid #5c2a2a;
+            color: #f0a0a0;
+            padding: 0.75rem 1rem;
+            border-radius: 6px;
+            font-size: 0.875rem;
+            margin-bottom: 1rem;
+            display: none;
+        }
+
+        .error-msg.visible {
+            display: block;
+        }
+
+        .loading-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.9);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+        }
+
+        .loading-overlay.visible {
+            display: flex;
+        }
+
+        .loading-spinner {
+            width: 32px;
+            height: 32px;
+            border: 2px solid #333;
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .viewer {
+            position: fixed;
+            inset: 0;
+            background: #fafafa;
+            display: none;
+            flex-direction: column;
+            z-index: 50;
+        }
+
+        .viewer.visible {
+            display: flex;
+        }
+
+        .viewer-toolbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 1.5rem;
+            height: 56px;
+            background: #fff;
+            border-bottom: 1px solid #e0e0e0;
+            flex-shrink: 0;
+            gap: 1rem;
+        }
+
+        .toolbar-left {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            min-width: 0;
+        }
+
+        .viewer-filename {
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: #333;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .toolbar-hint {
+            font-size: 0.75rem;
+            color: #888;
+        }
+
+        .toolbar-center {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .mode-toggle {
+            display: flex;
+            background: #f0f0f0;
+            border-radius: 6px;
+            padding: 2px;
+        }
+
+        .mode-btn {
+            padding: 0.4rem 0.75rem;
+            border: none;
+            background: none;
+            font-size: 0.75rem;
+            color: #666;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: all 0.2s;
+        }
+
+        .mode-btn.active {
+            background: #fff;
+            color: #333;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        .style-indicator {
+            font-size: 0.7rem;
+            color: #888;
+            max-width: 120px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .style-indicator.has-style {
+            color: #2a7;
+        }
+
+        .toolbar-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .toolbar-btn {
+            background: none;
+            border: 1px solid #ddd;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            font-size: 0.8125rem;
+            color: #555;
+            cursor: pointer;
+            transition: background 0.2s, border-color 0.2s;
+        }
+
+        .toolbar-btn:hover {
+            background: #f5f5f5;
+            border-color: #ccc;
+        }
+
+        .toolbar-btn.active {
+            background: #333;
+            color: #fff;
+            border-color: #333;
+        }
+
+        .viewer-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 3rem;
+        }
+
+        .document {
+            max-width: 800px;
+            margin: 0 auto;
+            background: #fff;
+            padding: 4rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+            min-height: calc(100vh - 56px - 6rem);
+            line-height: 1.75;
+            color: #222;
+            font-size: 1rem;
+        }
+
+        .document strong.bionic {
+            font-weight: 600;
+        }
+
+        .document.shift-mode {
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        .doc-paragraph {
+            margin-bottom: 1.25em;
+            transition: background 0.3s ease, box-shadow 0.3s ease, transform 0.3s ease;
+            padding: 0.25em 0.5em;
+            margin-left: -0.5em;
+            margin-right: -0.5em;
+            border-radius: 4px;
+            position: relative;
+        }
+
+        .doc-paragraph.highlight {
+            background: #fff3cd;
+            box-shadow: 0 0 0 2px #fff3cd;
+            cursor: pointer;
+        }
+
+        .doc-paragraph.loading {
+            background: #e8f4fd;
+            box-shadow: 0 0 0 2px #e8f4fd;
+        }
+
+        .doc-paragraph.loading .para-content {
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 0.5; }
+            50% { opacity: 0.8; }
+        }
+
+        .doc-paragraph.summarized {
+            background: #e8f5e9;
+            box-shadow: 0 0 0 2px #e8f5e9;
+        }
+
+        .doc-paragraph.rephrased {
+            background: #f3e8ff;
+            box-shadow: 0 0 0 2px #f3e8ff;
+        }
+
+        .para-content {
+            transition: opacity 0.25s ease, transform 0.25s ease;
+        }
+
+        .para-content.fade-out {
+            opacity: 0;
+            transform: translateY(-8px);
+        }
+
+        .para-content.fade-in {
+            animation: fadeSlideIn 0.4s ease forwards;
+        }
+
+        @keyframes fadeSlideIn {
+            from {
+                opacity: 0;
+                transform: translateY(12px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .doc-paragraph.success-flash {
+            animation: successFlash 0.6s ease;
+        }
+
+        @keyframes successFlash {
+            0% { box-shadow: 0 0 0 2px currentColor; }
+            50% { box-shadow: 0 0 20px 4px rgba(72, 187, 120, 0.4); }
+            100% { box-shadow: 0 0 0 2px currentColor; }
+        }
+
+        .bullet-list {
+            margin: 0;
+            padding-left: 1.5em;
+            font-size: inherit;
+            font-family: inherit;
+            line-height: inherit;
+            color: inherit;
+        }
+
+        .bullet-list li {
+            margin-bottom: 0.5em;
+        }
+
+        .bullet-list li:last-child {
+            margin-bottom: 0;
+        }
+
+        .bullet-list strong.bionic {
+            font-weight: 600;
+        }
+
+        .restore-btn {
+            display: inline-block;
+            margin-top: 1em;
+            font-size: 0.7rem;
+            color: #888;
+            background: transparent;
+            border: none;
+            padding: 0.4em 0;
+            cursor: pointer;
+            opacity: 0.7;
+            transition: opacity 0.2s, color 0.2s;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .restore-btn:hover {
+            opacity: 1;
+            color: #555;
+        }
+
+        .restore-btn::before {
+            content: '← ';
+        }
+
+        .rephrased-text {
+            display: block;
+        }
+
+        .term-highlight {
+            background: #d4edda;
+            padding: 0 2px;
+            border-radius: 2px;
+            cursor: help;
+            position: relative;
+        }
+
+        .term-highlight:hover::after {
+            content: attr(data-definition);
+            position: absolute;
+            bottom: calc(100% + 8px);
+            left: 50%;
+            transform: translateX(-50%);
+            background: #333;
+            color: #fff;
+            padding: 0.6em 1em;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            line-height: 1.4;
+            width: max-content;
+            max-width: 320px;
+            z-index: 100;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+            text-align: left;
+        }
+
+        .term-highlight:hover::before {
+            content: '';
+            position: absolute;
+            bottom: calc(100% + 2px);
+            left: 50%;
+            transform: translateX(-50%);
+            border: 6px solid transparent;
+            border-top-color: #333;
+            z-index: 100;
+        }
+
+        .doc-heading {
+            margin: 1.75em 0 0.75em 0;
+            color: #111;
+            font-weight: 600;
+            line-height: 1.3;
+        }
+
+        .doc-h1 { font-size: 1.875rem; }
+        .doc-h2 { font-size: 1.5rem; }
+        .doc-h3 { font-size: 1.25rem; }
+        .doc-h4 { font-size: 1.125rem; }
+        .doc-h5 { font-size: 1rem; }
+        .doc-h6 { font-size: 0.875rem; }
+
+        .doc-title {
+            font-size: 2rem;
+            text-align: center;
+            margin-bottom: 0.5em;
+        }
+
+        .doc-subtitle {
+            font-size: 1.25rem;
+            text-align: center;
+            color: #555;
+            font-weight: 400;
+            margin-bottom: 2.5em;
+        }
+
+        .doc-link {
+            color: #2563eb;
+            text-decoration: underline;
+            text-decoration-color: rgba(37, 99, 235, 0.4);
+            transition: text-decoration-color 0.2s;
+        }
+
+        .doc-link:hover {
+            text-decoration-color: rgba(37, 99, 235, 1);
+        }
+
+        .doc-list {
+            margin: 1em 0 1em 1.5em;
+            padding: 0;
+        }
+
+        ol.doc-list {
+            list-style-type: decimal;
+        }
+
+        ul.doc-list {
+            list-style-type: disc;
+        }
+
+        .doc-list .doc-list {
+            margin-top: 0.5em;
+            margin-bottom: 0.5em;
+        }
+
+        .doc-list-level-0 { margin-left: 0; }
+        .doc-list-level-1 { margin-left: 1.5em; }
+        .doc-list-level-2 { margin-left: 3em; }
+        .doc-list-level-3 { margin-left: 4.5em; }
+        .doc-list-level-4 { margin-left: 6em; }
+
+        ol.doc-list-level-1 { list-style-type: lower-alpha; }
+        ol.doc-list-level-2 { list-style-type: lower-roman; }
+        ol.doc-list-level-3 { list-style-type: decimal; }
+
+        .doc-list-item {
+            margin-bottom: 0.5em;
+            transition: background 0.3s ease, box-shadow 0.3s ease;
+            padding: 0.25em 0.5em;
+            margin-left: -0.5em;
+            border-radius: 4px;
+        }
+
+        .doc-list-item.loading {
+            background: #e8f4fd;
+            box-shadow: 0 0 0 2px #e8f4fd;
+        }
+
+        .doc-list-item.loading .para-content {
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+
+        .doc-list-item.summarized {
+            background: #e8f5e9;
+            box-shadow: 0 0 0 2px #e8f5e9;
+        }
+
+        .doc-list-item.rephrased {
+            background: #f3e8ff;
+            box-shadow: 0 0 0 2px #f3e8ff;
+        }
+
+        .doc-list-item.success-flash {
+            animation: successFlash 0.6s ease;
+        }
+
+        .doc-list-item .para-content {
+            display: block;
+        }
+
+        .doc-list-item .para-content.fade-out {
+            opacity: 0;
+            transform: translateY(-8px);
+        }
+
+        .doc-list-item .para-content.fade-in {
+            animation: fadeSlideIn 0.4s ease forwards;
+        }
+
+        .doc-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1.5em 0;
+            font-size: 0.9375rem;
+        }
+
+        .doc-table-cell {
+            border: 1px solid #ddd;
+            padding: 0.625rem 0.875rem;
+            text-align: left;
+        }
+
+        .doc-table tr:nth-child(even) {
+            background: #f9f9f9;
+        }
+
+        .doc-image-container {
+            margin: 1.5em 0;
+            text-align: center;
+            position: relative;
+        }
+
+        .doc-image {
+            max-width: 100%;
+            height: auto;
+            border-radius: 4px;
+            transition: box-shadow 0.2s, transform 0.2s;
+        }
+
+        .doc-image-container.highlight .doc-image {
+            box-shadow: 0 0 0 3px #fff3cd, 0 4px 12px rgba(0,0,0,0.15);
+            cursor: pointer;
+        }
+
+        .doc-image-container.loading .doc-image {
+            opacity: 0.6;
+        }
+
+        .doc-image-container.described {
+            background: #e8f5e9;
+            padding: 1em;
+            border-radius: 8px;
+        }
+
+        .image-description {
+            margin-top: 1em;
+            padding: 1em 1.25em;
+            background: #f8f9fa;
+            border-left: 3px solid #48bb78;
+            border-radius: 0 6px 6px 0;
+            text-align: left;
+            font-size: 0.9rem;
+            color: #444;
+            line-height: 1.6;
+        }
+
+        .image-description .desc-label {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #48bb78;
+            font-weight: 600;
+            margin-bottom: 0.5em;
+            display: block;
+        }
+
+        .image-description .restore-btn {
+            display: block;
+            margin-top: 0.75em;
+        }
+
+        ::selection {
+            background: #fef3c7;
+        }
+
+        .document.dyslexia-font,
+        .document.dyslexia-font * {
+            font-family: 'OpenDyslexic', sans-serif !important;
+        }
+
+        /* Settings panel */
+        .settings-panel {
+            position: fixed;
+            top: 56px;
+            right: 0;
+            width: 320px;
+            background: #fff;
+            border-left: 1px solid #e0e0e0;
+            box-shadow: -2px 0 10px rgba(0,0,0,0.1);
+            z-index: 60;
+            display: none;
+            flex-direction: column;
+            max-height: calc(100vh - 56px);
+        }
+
+        .settings-panel.visible {
+            display: flex;
+        }
+
+        .settings-header {
+            padding: 1rem 1.25rem;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .settings-header h3 {
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .settings-close {
+            background: none;
+            border: none;
+            font-size: 1.25rem;
+            color: #999;
+            cursor: pointer;
+        }
+
+        .settings-body {
+            padding: 1.25rem;
+            overflow-y: auto;
+        }
+
+        .settings-section {
+            margin-bottom: 1.5rem;
+        }
+
+        .settings-section h4 {
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: #555;
+            margin-bottom: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .settings-section p {
+            font-size: 0.8rem;
+            color: #888;
+            margin-bottom: 0.75rem;
+        }
+
+        .style-upload-zone {
+            border: 1px dashed #ccc;
+            border-radius: 6px;
+            padding: 1.5rem 1rem;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .style-upload-zone:hover {
+            border-color: #999;
+            background: #fafafa;
+        }
+
+        .style-upload-zone.has-file {
+            border-style: solid;
+            border-color: #2a7;
+            background: #f0fff4;
+        }
+
+        .style-upload-zone input {
+            display: none;
+        }
+
+        .style-upload-zone span {
+            font-size: 0.8rem;
+            color: #666;
+        }
+
+        .style-upload-zone.has-file span {
+            color: #2a7;
+        }
+
+        .clear-style-btn {
+            margin-top: 0.75rem;
+            font-size: 0.75rem;
+            color: #c00;
+            background: none;
+            border: none;
+            cursor: pointer;
+            display: none;
+        }
+
+        .clear-style-btn.visible {
+            display: inline-block;
+        }
+
+        @media (max-width: 900px) {
+            .document {
+                padding: 2rem;
+                margin: 0;
+                box-shadow: none;
+            }
+
+            .viewer-content {
+                padding: 0;
+            }
+
+            .toolbar-hint {
+                display: none;
+            }
+
+            .toolbar-center {
+                display: none;
+            }
+
+            .settings-panel {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="upload-screen" id="uploadScreen">
+        <div class="upload-container">
+            <h1>Bionic Reader</h1>
+            <p>Convert DOCX documents to bionic reading format</p>
+
+            <div class="error-msg" id="errorMsg"></div>
+
+            <div class="upload-zone" id="uploadZone">
+                <input type="file" id="fileInput" accept=".docx">
+                <span class="upload-label">Drop a DOCX file here or</span>
+                <button class="upload-btn" type="button" onclick="document.getElementById('fileInput').click()">
+                    Select file
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div class="loading-overlay" id="loading">
+        <div class="loading-spinner"></div>
+    </div>
+
+    <div class="viewer" id="viewer">
+        <div class="viewer-toolbar">
+            <div class="toolbar-left">
+                <span class="viewer-filename" id="filename"></span>
+                <span class="toolbar-hint">Shift+click paragraph or select text + Enter</span>
+            </div>
+            <div class="toolbar-center">
+                <div class="mode-toggle">
+                    <button class="mode-btn active" data-mode="summarize">Summarize</button>
+                    <button class="mode-btn" data-mode="rephrase">Rephrase</button>
+                </div>
+                <span class="style-indicator" id="styleIndicator">No style set</span>
+            </div>
+            <div class="toolbar-actions">
+                <button class="toolbar-btn" id="settingsBtn" onclick="toggleSettings()">Settings</button>
+                <button class="toolbar-btn" id="dyslexiaBtn" onclick="toggleDyslexia()">Dyslexia Font</button>
+                <button class="toolbar-btn" onclick="closeViewer()">Close</button>
+            </div>
+        </div>
+        <div class="viewer-content">
+            <div class="document" id="documentContent"></div>
+        </div>
+    </div>
+
+    <div class="settings-panel" id="settingsPanel">
+        <div class="settings-header">
+            <h3>Settings</h3>
+            <button class="settings-close" onclick="toggleSettings()">&times;</button>
+        </div>
+        <div class="settings-body">
+            <div class="settings-section">
+                <h4>Writing Style Sample</h4>
+                <p>Upload a document written in your preferred style. Rephrase will match this style.</p>
+                <div class="style-upload-zone" id="styleUploadZone">
+                    <input type="file" id="styleFileInput" accept=".docx">
+                    <span id="styleUploadLabel">Click to upload DOCX</span>
+                </div>
+                <button class="clear-style-btn" id="clearStyleBtn" onclick="clearWritingStyle()">Clear style sample</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    {% raw %}
+        const uploadScreen = document.getElementById('uploadScreen');
+        const uploadZone = document.getElementById('uploadZone');
+        const fileInput = document.getElementById('fileInput');
+        const loading = document.getElementById('loading');
+        const viewer = document.getElementById('viewer');
+        const documentContent = document.getElementById('documentContent');
+        const filename = document.getElementById('filename');
+        const errorMsg = document.getElementById('errorMsg');
+        const settingsPanel = document.getElementById('settingsPanel');
+        const styleUploadZone = document.getElementById('styleUploadZone');
+        const styleFileInput = document.getElementById('styleFileInput');
+        const styleUploadLabel = document.getElementById('styleUploadLabel');
+        const styleIndicator = document.getElementById('styleIndicator');
+        const clearStyleBtn = document.getElementById('clearStyleBtn');
+
+        let shiftPressed = false;
+        let currentHighlight = null;
+        let currentMode = 'summarize';
+        let writingSample = '';
+
+        // Mode toggle
+        document.querySelectorAll('.mode-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                currentMode = btn.dataset.mode;
+            });
+        });
+
+        // Track shift key
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Shift') {
+                shiftPressed = true;
+                documentContent.classList.add('shift-mode');
+            }
+
+            // Enter key to process selected text
+            if (e.key === 'Enter') {
+                const selection = window.getSelection();
+                const selectedText = selection.toString().trim();
+
+                if (selectedText.length > 0 && viewer.classList.contains('visible')) {
+                    e.preventDefault();
+                    processSelectedText(selectedText);
+                }
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            if (e.key === 'Shift') {
+                shiftPressed = false;
+                documentContent.classList.remove('shift-mode');
+
+                if (currentHighlight) {
+                    currentHighlight.classList.remove('highlight');
+                    currentHighlight = null;
+                }
+            }
+        });
+
+        // Handle paragraph and image hover/click
+        documentContent.addEventListener('mouseover', (e) => {
+            if (!shiftPressed) return;
+
+            // Check for image
+            const imgContainer = e.target.closest('.doc-image-container');
+            if (imgContainer && !imgContainer.classList.contains('loading') && !imgContainer.classList.contains('described')) {
+                if (currentHighlight && currentHighlight !== imgContainer) {
+                    currentHighlight.classList.remove('highlight');
+                }
+                imgContainer.classList.add('highlight');
+                currentHighlight = imgContainer;
+                return;
+            }
+
+            // Check for paragraph
+            const para = e.target.closest('.doc-paragraph');
+            if (para && !para.classList.contains('loading') && !para.classList.contains('summarized') && !para.classList.contains('rephrased')) {
+                if (currentHighlight && currentHighlight !== para) {
+                    currentHighlight.classList.remove('highlight');
+                }
+                para.classList.add('highlight');
+                currentHighlight = para;
+            }
+        });
+
+        documentContent.addEventListener('mouseout', (e) => {
+            if (!shiftPressed) return;
+
+            const imgContainer = e.target.closest('.doc-image-container');
+            if (imgContainer && !e.relatedTarget?.closest('.doc-image-container')) {
+                imgContainer.classList.remove('highlight');
+                if (currentHighlight === imgContainer) currentHighlight = null;
+                return;
+            }
+
+            const para = e.target.closest('.doc-paragraph');
+            if (para && !e.relatedTarget?.closest('.doc-paragraph')) {
+                para.classList.remove('highlight');
+                if (currentHighlight === para) currentHighlight = null;
+            }
+        });
+
+        documentContent.addEventListener('click', (e) => {
+            if (!shiftPressed) return;
+            if (e.target.classList.contains('restore-btn')) return;
+
+            // Check for image click
+            const imgContainer = e.target.closest('.doc-image-container');
+            if (imgContainer && !imgContainer.classList.contains('loading') && !imgContainer.classList.contains('described')) {
+                describeImage(imgContainer);
+                return;
+            }
+
+            // Check for paragraph click
+            const para = e.target.closest('.doc-paragraph');
+            if (!para || para.classList.contains('loading') || para.classList.contains('summarized') || para.classList.contains('rephrased')) return;
+
+            if (currentMode === 'summarize') {
+                summarizeParagraph(para);
+            } else {
+                rephraseParagraph(para);
+            }
+        });
+
+        async function summarizeParagraph(para) {
+            const originalHtml = para.innerHTML;
+            const originalText = para.textContent;
+
+            para.classList.remove('highlight');
+            para.classList.add('loading');
+
+            // Wrap current content for animation
+            const currentContent = para.innerHTML;
+            para.innerHTML = `<div class="para-content">${currentContent}</div>`;
+
+            try {
+                const response = await fetch('/summarize', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: originalText })
+                });
+
+                const data = await response.json();
+
+                if (data.error) {
+                    para.classList.remove('loading');
+                    para.innerHTML = originalHtml;
+                    console.error('Summarize error:', data.error);
+                    return;
+                }
+
+                let bulletHtml = '<ul class="bullet-list">';
+                for (const bullet of data.bullets) {
+                    bulletHtml += `<li>${applyBionic(bullet)}</li>`;
+                }
+                bulletHtml += '</ul>';
+                bulletHtml += '<button class="restore-btn" type="button">Show original</button>';
+
+                // Animate out old content
+                const oldContent = para.querySelector('.para-content');
+                if (oldContent) {
+                    oldContent.classList.add('fade-out');
+                }
+
+                await new Promise(r => setTimeout(r, 250));
+
+                // Replace with new content and animate in
+                para.innerHTML = `<div class="para-content fade-in">${bulletHtml}</div>`;
+                para.classList.remove('loading');
+                para.classList.add('summarized', 'success-flash');
+
+                para.dataset.originalHtml = originalHtml;
+
+                para.querySelector('.restore-btn').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    animateRestore(para, 'summarized');
+                });
+
+                // Remove flash class after animation
+                setTimeout(() => para.classList.remove('success-flash'), 600);
+
+            } catch (err) {
+                para.classList.remove('loading');
+                para.innerHTML = originalHtml;
+                console.error('Summarize failed:', err);
+            }
+        }
+
+        async function rephraseParagraph(para) {
+            const originalHtml = para.innerHTML;
+            const originalText = para.textContent;
+
+            para.classList.remove('highlight');
+            para.classList.add('loading');
+
+            // Wrap current content for animation
+            const currentContent = para.innerHTML;
+            para.innerHTML = `<div class="para-content">${currentContent}</div>`;
+
+            try {
+                const response = await fetch('/rephrase', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        text: originalText,
+                        writingSample: writingSample
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.error) {
+                    para.classList.remove('loading');
+                    para.innerHTML = originalHtml;
+                    console.error('Rephrase error:', data.error);
+                    return;
+                }
+
+                // Apply bionic formatting and highlight terms
+                let rephrasedHtml = '<div class="rephrased-text">' + applyBionicWithTerms(data.rephrased, data.terms || []) + '</div>';
+                rephrasedHtml += '<button class="restore-btn" type="button">Show original</button>';
+
+                // Animate out old content
+                const oldContent = para.querySelector('.para-content');
+                if (oldContent) {
+                    oldContent.classList.add('fade-out');
+                }
+
+                await new Promise(r => setTimeout(r, 250));
+
+                // Replace with new content and animate in
+                para.innerHTML = `<div class="para-content fade-in">${rephrasedHtml}</div>`;
+                para.classList.remove('loading');
+                para.classList.add('rephrased', 'success-flash');
+
+                para.dataset.originalHtml = originalHtml;
+
+                para.querySelector('.restore-btn').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    animateRestore(para, 'rephrased');
+                });
+
+                // Remove flash class after animation
+                setTimeout(() => para.classList.remove('success-flash'), 600);
+
+            } catch (err) {
+                para.classList.remove('loading');
+                para.innerHTML = originalHtml;
+                console.error('Rephrase failed:', err);
+            }
+        }
+
+        async function animateRestore(para, stateClass) {
+            const content = para.querySelector('.para-content');
+            if (content) {
+                content.classList.add('fade-out');
+                await new Promise(r => setTimeout(r, 250));
+            }
+
+            para.innerHTML = `<div class="para-content fade-in">${para.dataset.originalHtml}</div>`;
+            para.classList.remove(stateClass);
+            delete para.dataset.originalHtml;
+
+            // Clean up wrapper after animation
+            setTimeout(() => {
+                const wrapper = para.querySelector('.para-content');
+                if (wrapper) {
+                    para.innerHTML = wrapper.innerHTML;
+                }
+            }, 400);
+        }
+
+        async function processSelectedText(selectedText) {
+            const selection = window.getSelection();
+            if (!selection.rangeCount) return;
+
+            const range = selection.getRangeAt(0);
+
+            // Find the paragraph containing the selection
+            let container = range.commonAncestorContainer;
+            if (container.nodeType === Node.TEXT_NODE) {
+                container = container.parentElement;
+            }
+
+            // Walk up to find a paragraph, list item, or any P/LI tag within documentContent
+            while (container && container !== documentContent && container !== document.body) {
+                if (container.classList && container.classList.contains('doc-paragraph')) {
+                    break;
+                }
+                if (container.classList && container.classList.contains('doc-list-item')) {
+                    break;
+                }
+                if (container.tagName === 'P' && documentContent.contains(container)) {
+                    break;
+                }
+                if (container.tagName === 'LI' && documentContent.contains(container)) {
+                    break;
+                }
+                container = container.parentElement;
+            }
+
+            // Clear selection
+            selection.removeAllRanges();
+
+            // Process the containing element
+            if (container && container !== documentContent && container !== document.body) {
+                console.log('Processing container:', container.tagName, container.className);
+
+                if (container.classList && container.classList.contains('doc-paragraph')) {
+                    if (currentMode === 'summarize') {
+                        summarizeParagraph(container);
+                    } else {
+                        rephraseParagraph(container);
+                    }
+                } else if (container.classList && container.classList.contains('doc-list-item')) {
+                    processListItem(container, selectedText);
+                } else if (container.tagName === 'P') {
+                    // Fallback for P tags without doc-paragraph class
+                    if (currentMode === 'summarize') {
+                        summarizeParagraph(container);
+                    } else {
+                        rephraseParagraph(container);
+                    }
+                } else if (container.tagName === 'LI') {
+                    processListItem(container, selectedText);
+                }
+            } else {
+                console.log('No valid container found for selection');
+            }
+        }
+
+        async function processListItem(item, selectedText) {
+            const originalHtml = item.innerHTML;
+            const textToProcess = selectedText || item.textContent;
+
+            item.classList.add('loading');
+            item.innerHTML = `<div class="para-content">${originalHtml}</div>`;
+
+            try {
+                const endpoint = currentMode === 'summarize' ? '/summarize' : '/rephrase';
+                const body = currentMode === 'summarize'
+                    ? { text: textToProcess }
+                    : { text: textToProcess, writingSample };
+
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+
+                const data = await response.json();
+
+                if (data.error) {
+                    item.classList.remove('loading');
+                    item.innerHTML = originalHtml;
+                    console.error('Process error:', data.error);
+                    return;
+                }
+
+                let resultHtml;
+                const stateClass = currentMode === 'summarize' ? 'summarized' : 'rephrased';
+
+                if (currentMode === 'summarize') {
+                    resultHtml = '<ul class="bullet-list">';
+                    for (const bullet of data.bullets) {
+                        resultHtml += `<li>${applyBionic(bullet)}</li>`;
+                    }
+                    resultHtml += '</ul>';
+                    resultHtml += '<button class="restore-btn" type="button">Show original</button>';
+                } else {
+                    resultHtml = '<div class="rephrased-text">' + applyBionicWithTerms(data.rephrased, data.terms || []) + '</div>';
+                    resultHtml += '<button class="restore-btn" type="button">Show original</button>';
+                }
+
+                // Animate out old content
+                const oldContent = item.querySelector('.para-content');
+                if (oldContent) {
+                    oldContent.classList.add('fade-out');
+                }
+
+                await new Promise(r => setTimeout(r, 250));
+
+                // Replace with new content
+                item.innerHTML = `<div class="para-content fade-in">${resultHtml}</div>`;
+                item.classList.remove('loading');
+                item.classList.add(stateClass, 'success-flash');
+                item.dataset.originalHtml = originalHtml;
+
+                item.querySelector('.restore-btn').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    animateRestoreItem(item, stateClass);
+                });
+
+                setTimeout(() => item.classList.remove('success-flash'), 600);
+
+            } catch (err) {
+                item.classList.remove('loading');
+                item.innerHTML = originalHtml;
+                console.error('Process list item failed:', err);
+            }
+        }
+
+        async function animateRestoreItem(item, stateClass) {
+            const content = item.querySelector('.para-content');
+            if (content) {
+                content.classList.add('fade-out');
+                await new Promise(r => setTimeout(r, 250));
+            }
+
+            item.innerHTML = `<div class="para-content fade-in">${item.dataset.originalHtml}</div>`;
+            item.classList.remove(stateClass);
+            delete item.dataset.originalHtml;
+
+            setTimeout(() => {
+                const wrapper = item.querySelector('.para-content');
+                if (wrapper) {
+                    item.innerHTML = wrapper.innerHTML;
+                }
+            }, 400);
+        }
+
+        async function describeImage(container) {
+            const img = container.querySelector('.doc-image');
+            const imageId = img?.dataset.imageId;
+            if (!imageId) return;
+
+            container.classList.remove('highlight');
+            container.classList.add('loading');
+
+            try {
+                const response = await fetch('/describe-image', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ imageId })
+                });
+
+                const data = await response.json();
+
+                if (data.error) {
+                    container.classList.remove('loading');
+                    console.error('Describe error:', data.error);
+                    return;
+                }
+
+                const descDiv = container.querySelector('.image-description');
+                const bionicDescription = applyBionic(data.description);
+                descDiv.innerHTML = `
+                    <span class="desc-label">Image Description</span>
+                    <span class="desc-text">${bionicDescription}</span>
+                    <button class="restore-btn" type="button">Hide description</button>
+                `;
+                descDiv.style.display = 'block';
+                descDiv.classList.add('fade-in');
+
+                container.classList.remove('loading');
+                container.classList.add('described', 'success-flash');
+
+                descDiv.querySelector('.restore-btn').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    descDiv.style.display = 'none';
+                    container.classList.remove('described');
+                });
+
+                setTimeout(() => container.classList.remove('success-flash'), 600);
+
+            } catch (err) {
+                container.classList.remove('loading');
+                console.error('Describe failed:', err);
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function getFixationLength(word) {
+            const clean = word.replace(/\W/g, '');
+            const len = clean.length;
+            if (len <= 1) return 1;
+            if (len <= 3) return Math.floor(len * 0.6) + 1;
+            return Math.floor(len * 0.45) + 1;
+        }
+
+        function applyBionic(text) {
+            const parts = text.split(/(\s+)/);
+            let result = '';
+            for (const part of parts) {
+                if (!part.trim() || !/[a-zA-Z0-9]/.test(part)) {
+                    result += escapeHtml(part);
+                } else {
+                    const fix = getFixationLength(part);
+                    const bold = escapeHtml(part.slice(0, fix));
+                    const rest = escapeHtml(part.slice(fix));
+                    result += `<strong class="bionic">${bold}</strong>${rest}`;
+                }
+            }
+            return result;
+        }
+
+        function applyBionicWithTerms(text, terms) {
+            // Sort terms by length (longest first) to handle overlapping terms
+            const sortedTerms = [...terms].sort((a, b) => b.word.length - a.word.length);
+
+            // Create placeholders for terms (using chars unlikely to appear in text)
+            const placeholders = [];
+            let processedText = text;
+
+            sortedTerms.forEach((term, idx) => {
+                const regex = new RegExp(`\\b(${escapeRegex(term.word)})\\b`, 'gi');
+                processedText = processedText.replace(regex, (match) => {
+                    const placeholderId = placeholders.length;
+                    placeholders.push({
+                        word: match,
+                        definition: term.definition
+                    });
+                    return `\x00${placeholderId}\x00`;
+                });
+            });
+
+            // Now split by whitespace and process
+            const parts = processedText.split(/(\s+)/);
+            let result = '';
+
+            for (const part of parts) {
+                // Check if this part contains a placeholder (may have punctuation around it)
+                const placeholderMatch = part.match(/^([^\x00]*)\x00(\d+)\x00([^\x00]*)$/);
+                if (placeholderMatch) {
+                    const before = placeholderMatch[1];
+                    const ph = placeholders[parseInt(placeholderMatch[2])];
+                    const after = placeholderMatch[3];
+                    const definition = escapeHtml(ph.definition);
+                    const bionicPhrase = applyBionicToPhrase(ph.word);
+                    result += escapeHtml(before) + `<span class="term-highlight" data-definition="${definition}">${bionicPhrase}</span>` + escapeHtml(after);
+                } else if (!part.trim() || !/[a-zA-Z0-9]/.test(part)) {
+                    result += escapeHtml(part);
+                } else {
+                    result += applyBionicToWord(part);
+                }
+            }
+
+            return result;
+        }
+
+        function applyBionicToPhrase(phrase) {
+            // Apply bionic to each word in a phrase
+            const words = phrase.split(/(\s+)/);
+            return words.map(w => {
+                if (!w.trim() || !/[a-zA-Z0-9]/.test(w)) {
+                    return escapeHtml(w);
+                }
+                return applyBionicToWord(w);
+            }).join('');
+        }
+
+        function applyBionicToWord(word) {
+            const fix = getFixationLength(word);
+            const bold = escapeHtml(word.slice(0, fix));
+            const rest = escapeHtml(word.slice(fix));
+            return `<strong class="bionic">${bold}</strong>${rest}`;
+        }
+
+        function escapeRegex(string) {
+            return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        }
+
+        // Settings panel
+        function toggleSettings() {
+            settingsPanel.classList.toggle('visible');
+        }
+
+        // Writing style upload
+        styleUploadZone.addEventListener('click', () => {
+            styleFileInput.click();
+        });
+
+        styleFileInput.addEventListener('change', async (e) => {
+            if (e.target.files.length === 0) return;
+
+            const file = e.target.files[0];
+            if (!file.name.toLowerCase().endsWith('.docx')) {
+                alert('Please upload a DOCX file.');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch('/extract-text', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (data.error) {
+                    alert('Error: ' + data.error);
+                    return;
+                }
+
+                writingSample = data.text;
+                styleUploadLabel.textContent = data.filename;
+                styleUploadZone.classList.add('has-file');
+                styleIndicator.textContent = data.filename;
+                styleIndicator.classList.add('has-style');
+                clearStyleBtn.classList.add('visible');
+
+            } catch (err) {
+                alert('Failed to upload file.');
+                console.error(err);
+            }
+        });
+
+        function clearWritingStyle() {
+            writingSample = '';
+            styleFileInput.value = '';
+            styleUploadLabel.textContent = 'Click to upload DOCX';
+            styleUploadZone.classList.remove('has-file');
+            styleIndicator.textContent = 'No style set';
+            styleIndicator.classList.remove('has-style');
+            clearStyleBtn.classList.remove('visible');
+        }
+
+        // Upload handlers
+        uploadZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadZone.classList.add('drag-over');
+        });
+
+        uploadZone.addEventListener('dragleave', () => {
+            uploadZone.classList.remove('drag-over');
+        });
+
+        uploadZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadZone.classList.remove('drag-over');
+            if (e.dataTransfer.files.length > 0) {
+                handleFile(e.dataTransfer.files[0]);
+            }
+        });
+
+        uploadZone.addEventListener('click', (e) => {
+            if (e.target.tagName !== 'BUTTON') {
+                fileInput.click();
+            }
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleFile(e.target.files[0]);
+            }
+        });
+
+        function showError(msg) {
+            errorMsg.textContent = msg;
+            errorMsg.classList.add('visible');
+        }
+
+        function hideError() {
+            errorMsg.classList.remove('visible');
+        }
+
+        function handleFile(file) {
+            hideError();
+
+            if (!file.name.toLowerCase().endsWith('.docx')) {
+                showError('Only DOCX files are supported.');
+                return;
+            }
+
+            loading.classList.add('visible');
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            fetch('/convert', {
+                method: 'POST',
+                body: formData
+            })
+            .then(res => res.json())
+            .then(data => {
+                loading.classList.remove('visible');
+
+                if (data.error) {
+                    showError(data.error);
+                    return;
+                }
+
+                filename.textContent = data.filename;
+                documentContent.innerHTML = data.html;
+                uploadScreen.classList.add('hidden');
+                viewer.classList.add('visible');
+            })
+            .catch(() => {
+                loading.classList.remove('visible');
+                showError('Failed to process document.');
+            });
+        }
+
+        function closeViewer() {
+            viewer.classList.remove('visible');
+            uploadScreen.classList.remove('hidden');
+            documentContent.innerHTML = '';
+            fileInput.value = '';
+            settingsPanel.classList.remove('visible');
+        }
+
+        function toggleDyslexia() {
+            const btn = document.getElementById('dyslexiaBtn');
+            documentContent.classList.toggle('dyslexia-font');
+            btn.classList.toggle('active');
+        }
+    {% endraw %}
+    </script>
+</body>
+</html>
