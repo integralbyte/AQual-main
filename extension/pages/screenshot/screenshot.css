@@ -1,0 +1,45 @@
+body {
+  margin: 0;
+  font-family: "Lexend", system-ui, sans-serif;
+  background: #0b1220;
+  color: #f8fafc;
+}
+
+.wrap {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+h1 {
+  margin: 0 0 6px 0;
+  font-size: 22px;
+}
+
+p {
+  margin: 0 0 16px 0;
+  color: #cbd5f5;
+}
+
+.actions {
+  margin-bottom: 16px;
+}
+
+button {
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid #334155;
+  background: #111827;
+  color: #f8fafc;
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: #22d3ee;
+}
+
+img {
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid #1f2937;
+}
