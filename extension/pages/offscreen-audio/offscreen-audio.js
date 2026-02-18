@@ -8,10 +8,36 @@ let analyser = null;
 let recording = false;
 let currentMode = "elevenlabs";
 let fullTranscript = "";
+let recordingSession = 0;
+
+function normalizeAudioMode(mode) {
+  const token = String(mode || "").toLowerCase().replace(/[\s_-]+/g, "");
+  if (token === "local" || token === "localwhisper" || token === "whisper") {
+    return "local";
+  }
+  if (token === "elevenlabs" || token === "elevenlab" || token === "eleven" || token === "11labs") {
+    return "elevenlabs";
+  }
+  return "local";
+}
 
 function setRecording(value) {
   recording = value;
   chrome.runtime.sendMessage({ type: "aqual-audio-state", recording: value });
+}
+
+function isActiveSession(sessionId, ws) {
+  return recording && recordingSession === sessionId && audioWs === ws;
+}
+
+function abortSession(sessionId, transcriptText) {
+  if (recordingSession !== sessionId) return;
+  recordingSession += 1;
+  cleanupAudioSession();
+  setRecording(false);
+  if (transcriptText) {
+    emitTranscript(transcriptText);
+  }
 }
 
 function emitTranscript(text) {
@@ -70,28 +96,47 @@ function cleanupAudioSession() {
 }
 
 async function startRecording(modeOverride) {
-  if (recording) return;
+  const requestedMode = normalizeAudioMode(modeOverride || currentMode);
+  if (recording) {
+    // Duplicate start events can happen; keep current capture stable for same mode.
+    if (requestedMode === currentMode) {
+      return;
+    }
+    stopRecording();
+  }
+  cleanupAudioSession();
   fullTranscript = "";
-  currentMode = modeOverride || "elevenlabs";
+  currentMode = requestedMode;
+  const sessionId = recordingSession + 1;
+  recordingSession = sessionId;
   setRecording(true);
 
   try {
     if (currentMode === "elevenlabs") {
-      await startElevenLabs();
+      await startElevenLabs(sessionId);
     } else {
-      await startLocalWhisper();
+      await startLocalWhisper(sessionId);
     }
   } catch (err) {
-    setRecording(false);
-    emitTranscript(`Error: ${err.message || err}`);
+    if (recordingSession !== sessionId) {
+      return;
+    }
+    abortSession(sessionId, `Error: ${err.message || err}`);
   }
 }
 
-async function startElevenLabs() {
+async function startElevenLabs(sessionId) {
   const wsUrl = `ws://${AUDIO_SERVER_HOST}/ws/elevenlabs`;
-  audioWs = new WebSocket(wsUrl);
+  const ws = new WebSocket(wsUrl);
+  audioWs = ws;
 
-  audioWs.onmessage = (event) => {
+  ws.onopen = () => {
+    if (!isActiveSession(sessionId, ws)) return;
+    emitTranscript("Listening...");
+  };
+
+  ws.onmessage = (event) => {
+    if (!isActiveSession(sessionId, ws)) return;
     const data = JSON.parse(event.data);
     if (data.message_type === "partial_transcript") {
       const displayText = `${fullTranscript} ${data.text || ""}`.trim();
@@ -102,40 +147,54 @@ async function startElevenLabs() {
         emitTranscript(fullTranscript);
       }
     } else if (data.error) {
-      setRecording(false);
-      emitTranscript(`Error: ${data.error}`);
+      if (String(data.error).includes("ELEVENLABS_API_KEY is not configured")) {
+        abortSession(sessionId, "ElevenLabs API Key is not configured.");
+        return;
+      }
+      abortSession(sessionId, `Error: ${data.error}`);
     }
   };
 
-  audioWs.onclose = () => {
-    setRecording(false);
+  ws.onclose = () => {
+    if (!isActiveSession(sessionId, ws)) return;
+    abortSession(sessionId);
   };
 
-  audioWs.onerror = () => {
-    cleanupAudioSession();
-    setRecording(false);
-    emitTranscript("Connection error. Is the audio server running?");
+  ws.onerror = () => {
+    if (!isActiveSession(sessionId, ws)) return;
+    abortSession(sessionId, "Connection error. Is the audio server running?");
   };
 
-  mediaStream = await navigator.mediaDevices.getUserMedia({
+  const stream = await navigator.mediaDevices.getUserMedia({
     audio: {
       echoCancellation: true,
       noiseSuppression: true,
       autoGainControl: true
     }
   });
+  if (!isActiveSession(sessionId, ws)) {
+    stream.getTracks().forEach((track) => track.stop());
+    return;
+  }
+  mediaStream = stream;
 
-  audioContext = new AudioContext();
-  const source = audioContext.createMediaStreamSource(mediaStream);
-  analyser = audioContext.createAnalyser();
+  const context = new AudioContext();
+  if (!isActiveSession(sessionId, ws)) {
+    context.close();
+    return;
+  }
+  audioContext = context;
+  const source = context.createMediaStreamSource(stream);
+  analyser = context.createAnalyser();
   analyser.fftSize = 256;
   source.connect(analyser);
 
-  processor = audioContext.createScriptProcessor(2048, 1, 1);
+  processor = context.createScriptProcessor(2048, 1, 1);
   processor.onaudioprocess = (e) => {
+    if (!isActiveSession(sessionId, ws) || !audioContext) return;
     if (audioWs && audioWs.readyState === WebSocket.OPEN) {
       const inputData = e.inputBuffer.getChannelData(0);
-      const resampled = downsample(inputData, audioContext.sampleRate, 16000);
+      const resampled = downsample(inputData, context.sampleRate, 16000);
       const pcmData = floatTo16BitPCM(resampled);
       const base64Audio = arrayBufferToBase64(pcmData.buffer);
       audioWs.send(JSON.stringify({
@@ -147,31 +206,38 @@ async function startElevenLabs() {
   };
 
   source.connect(processor);
-  processor.connect(audioContext.destination);
+  processor.connect(context.destination);
 }
 
-async function startLocalWhisper() {
+async function startLocalWhisper(sessionId) {
   const wsUrl = `ws://${AUDIO_SERVER_HOST}/ws/audio`;
-  audioWs = new WebSocket(wsUrl);
+  const ws = new WebSocket(wsUrl);
+  audioWs = ws;
 
-  audioWs.onmessage = (event) => {
+  ws.onopen = () => {
+    if (!isActiveSession(sessionId, ws)) return;
+    emitTranscript("Listening...");
+  };
+
+  ws.onmessage = (event) => {
+    if (!isActiveSession(sessionId, ws)) return;
     const data = JSON.parse(event.data);
     if (data.text) {
       emitTranscript(data.text);
     }
   };
 
-  audioWs.onclose = () => {
-    setRecording(false);
+  ws.onclose = () => {
+    if (!isActiveSession(sessionId, ws)) return;
+    abortSession(sessionId);
   };
 
-  audioWs.onerror = () => {
-    cleanupAudioSession();
-    setRecording(false);
-    emitTranscript("Connection error. Is the audio server running?");
+  ws.onerror = () => {
+    if (!isActiveSession(sessionId, ws)) return;
+    abortSession(sessionId, "Connection error. Is the audio server running?");
   };
 
-  mediaStream = await navigator.mediaDevices.getUserMedia({
+  const stream = await navigator.mediaDevices.getUserMedia({
     audio: {
       channelCount: 1,
       sampleRate: 16000,
@@ -179,28 +245,40 @@ async function startLocalWhisper() {
       noiseSuppression: true
     }
   });
+  if (!isActiveSession(sessionId, ws)) {
+    stream.getTracks().forEach((track) => track.stop());
+    return;
+  }
+  mediaStream = stream;
 
-  audioContext = new AudioContext({ sampleRate: 16000 });
-  const source = audioContext.createMediaStreamSource(mediaStream);
-  analyser = audioContext.createAnalyser();
+  const context = new AudioContext({ sampleRate: 16000 });
+  if (!isActiveSession(sessionId, ws)) {
+    context.close();
+    return;
+  }
+  audioContext = context;
+  const source = context.createMediaStreamSource(stream);
+  analyser = context.createAnalyser();
   analyser.fftSize = 256;
   source.connect(analyser);
 
-  processor = audioContext.createScriptProcessor(4096, 1, 1);
+  processor = context.createScriptProcessor(4096, 1, 1);
   processor.onaudioprocess = (e) => {
+    if (!isActiveSession(sessionId, ws) || !audioContext) return;
     if (audioWs && audioWs.readyState === WebSocket.OPEN) {
       const inputData = e.inputBuffer.getChannelData(0);
-      const resampled = downsample(inputData, audioContext.sampleRate, 16000);
+      const resampled = downsample(inputData, context.sampleRate, 16000);
       const pcmData = floatTo16BitPCM(resampled);
       audioWs.send(pcmData.buffer);
     }
   };
 
   source.connect(processor);
-  processor.connect(audioContext.destination);
+  processor.connect(context.destination);
 }
 
 function stopRecording() {
+  recordingSession += 1;
   cleanupAudioSession();
   setRecording(false);
 }
