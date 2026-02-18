@@ -46,6 +46,7 @@ function applySettingsToTab(tabId) {
 }
 
 let liveAudioMode = null;
+let lastGoogleSearchQuery = "";
 
 function parseAudioMode(mode) {
   const token = String(mode || "").toLowerCase().replace(/[\s_-]+/g, "");
@@ -296,6 +297,507 @@ function containsOpenGoogle(text) {
     }
   }
   return normalized.includes("open google");
+}
+
+function isGoogleHost(hostname) {
+  return String(hostname || "").toLowerCase().includes("google.");
+}
+
+function isYouTubeHost(hostname) {
+  const host = String(hostname || "").toLowerCase();
+  return host === "youtu.be" || host.includes("youtube.com") || host.includes("youtube-nocookie.com");
+}
+
+function getHostnameSafe(url) {
+  try {
+    return new URL(String(url || "")).hostname.toLowerCase();
+  } catch (_error) {
+    return "";
+  }
+}
+
+function parseAbsoluteHttpUrl(rawUrl) {
+  const input = String(rawUrl || "").trim();
+  if (!/^https?:\/\//i.test(input)) return "";
+  try {
+    const parsed = new URL(input);
+    if (!/^https?:$/.test(parsed.protocol)) return "";
+    return parsed.href;
+  } catch (_error) {
+    return "";
+  }
+}
+
+function tryDecodeURIComponent(value) {
+  if (!value) return "";
+  try {
+    return decodeURIComponent(value);
+  } catch (_error) {
+    return value;
+  }
+}
+
+function unwrapGoogleNavigationUrl(rawUrl) {
+  let current = parseAbsoluteHttpUrl(rawUrl);
+  if (!current) return "";
+
+  const visited = new Set();
+  for (let depth = 0; depth < 6; depth += 1) {
+    if (!current || visited.has(current)) {
+      break;
+    }
+    visited.add(current);
+
+    let parsed;
+    try {
+      parsed = new URL(current);
+    } catch (_error) {
+      break;
+    }
+
+    if (!isGoogleHost(parsed.hostname)) {
+      return parsed.href;
+    }
+
+    const redirectParams = [
+      "continue",
+      "url",
+      "q",
+      "imgrefurl",
+      "imgurl",
+      "adurl",
+      "u",
+      "dest",
+      "destination"
+    ];
+
+    let nextUrl = "";
+    for (let i = 0; i < redirectParams.length; i += 1) {
+      const rawValue = parsed.searchParams.get(redirectParams[i]) || "";
+      if (!rawValue) continue;
+      const decodedValue = tryDecodeURIComponent(rawValue);
+      const resolved = parseAbsoluteHttpUrl(decodedValue) || parseAbsoluteHttpUrl(rawValue);
+      if (resolved) {
+        nextUrl = resolved;
+        break;
+      }
+    }
+
+    if (!nextUrl) {
+      break;
+    }
+
+    current = nextUrl;
+  }
+
+  return current;
+}
+
+function extractYouTubeVideoId(rawUrl) {
+  try {
+    const parsed = new URL(String(rawUrl || ""));
+    const host = parsed.hostname.toLowerCase().replace(/^www\./, "");
+    if (host === "youtu.be") {
+      const id = parsed.pathname.replace(/^\/+/, "").split("/")[0] || "";
+      return id.trim();
+    }
+    if (!host.includes("youtube.com") && !host.includes("youtube-nocookie.com")) {
+      return "";
+    }
+    const watchId = parsed.searchParams.get("v") || "";
+    if (watchId) {
+      return watchId.trim();
+    }
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    if (!parts.length) return "";
+    const first = parts[0].toLowerCase();
+    if ((first === "shorts" || first === "embed" || first === "live") && parts[1]) {
+      return parts[1].trim();
+    }
+    return "";
+  } catch (_error) {
+    return "";
+  }
+}
+
+function buildDirectYouTubeUrl(videoId) {
+  const cleaned = String(videoId || "").trim();
+  if (!cleaned) return "";
+  return `https://youtu.be/${encodeURIComponent(cleaned)}`;
+}
+
+function prepareVoiceOpenResultUrl(rawUrl) {
+  const unwrappedUrl = unwrapGoogleNavigationUrl(rawUrl);
+  const host = getHostnameSafe(unwrappedUrl);
+  if (!unwrappedUrl || isGoogleHost(host)) {
+    return "";
+  }
+  const ytVideoId = extractYouTubeVideoId(unwrappedUrl);
+  if (ytVideoId) {
+    return buildDirectYouTubeUrl(ytVideoId) || unwrappedUrl;
+  }
+  return unwrappedUrl;
+}
+
+function navigateToResolvedResult(activeTab, resolvedUrl) {
+  if (!resolvedUrl) return;
+  const targetHost = getHostnameSafe(resolvedUrl);
+  if (isYouTubeHost(targetHost)) {
+    chrome.tabs.create({
+      url: resolvedUrl,
+      active: true,
+      openerTabId: activeTab && activeTab.id ? activeTab.id : undefined
+    });
+    return;
+  }
+  if (activeTab && activeTab.id) {
+    chrome.tabs.update(activeTab.id, { url: resolvedUrl });
+  } else {
+    chrome.tabs.create({ url: resolvedUrl, active: true });
+  }
+}
+
+function isGoogleSearchTabUrl(url) {
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    if (!isGoogleHost(parsed.hostname)) return false;
+    if (parsed.pathname === "/search") return true;
+    if (parsed.pathname === "/" && parsed.searchParams.get("q")) return true;
+    if (parsed.pathname === "/webhp" && parsed.searchParams.get("q")) return true;
+    if (parsed.pathname.startsWith("/imgres")) return true;
+    return false;
+  } catch (_error) {
+    return false;
+  }
+}
+
+function extractGoogleQueryFromUrl(url) {
+  if (!url) return "";
+  try {
+    const parsed = new URL(url);
+    return (parsed.searchParams.get("q") || "").trim();
+  } catch (_error) {
+    return "";
+  }
+}
+
+function buildGoogleSearchUrl(query, tabKind) {
+  const url = new URL("https://www.google.com/search");
+  const safeQuery = String(query || "").trim();
+  if (safeQuery) {
+    url.searchParams.set("q", safeQuery);
+  }
+  if (tabKind === "images") {
+    url.searchParams.set("udm", "2");
+  } else if (tabKind === "videos") {
+    url.searchParams.set("udm", "7");
+  } else if (tabKind === "all") {
+    url.searchParams.set("udm", "web");
+  }
+  return url.toString();
+}
+
+function cleanGoogleQueryText(rawText) {
+  let query = String(rawText || "").trim();
+  if (!query) return "";
+  query = query.replace(/\b(?:on|in)\s+google\b/g, " ");
+  query = query.replace(/\b(?:please|now)\b/g, " ");
+  query = query.replace(/[\s.,!?;:]+$/g, "");
+  query = query.replace(/\s+/g, " ").trim();
+  return query;
+}
+
+function parseGoogleSearchIntent(text) {
+  const normalized = normalizeSpeech(text);
+  if (!normalized) return null;
+
+  const patterns = [
+    /^google search for (.+)$/i,
+    /^google search (.+)$/i,
+    /^search for (.+)$/i,
+    /^search (.+)$/i
+  ];
+
+  for (let i = 0; i < patterns.length; i += 1) {
+    const match = normalized.match(patterns[i]);
+    if (!match) continue;
+    const query = cleanGoogleQueryText(match[1]);
+    if (!query) continue;
+    if (query === "images tab" || query === "videos tab" || query === "photos tab") {
+      continue;
+    }
+    return { query };
+  }
+
+  const inlineMatch = normalized.match(/\bsearch for (.+)$/i);
+  if (inlineMatch) {
+    const query = cleanGoogleQueryText(inlineMatch[1]);
+    if (query) {
+      return { query };
+    }
+  }
+
+  return null;
+}
+
+function parseGoogleTabIntent(text) {
+  const normalized = normalizeSpeech(text);
+  if (!normalized) return null;
+
+  let tabKind = null;
+  if (includesAny(normalized, ["videos tab", "video tab", "videos results", "video results", "to videos", "to video", "videos", "video"])) {
+    tabKind = "videos";
+  } else if (includesAny(normalized, ["images tab", "image tab", "photos tab", "photo tab", "pictures tab", "images results", "image results", "photos results", "to images", "to image", "to photos", "to photo", "to pictures", "images", "image", "photos", "photo", "pictures"])) {
+    tabKind = "images";
+  } else if (includesAny(normalized, ["all tab", "web tab", "all results", "main results", "standard results", "to all", "to web", "web results"])) {
+    tabKind = "all";
+  }
+  if (!tabKind) return null;
+
+  const hasSwitchLanguage = includesAny(normalized, ["switch", "change", "go", "move"]);
+  const hasTabLanguage = includesAny(normalized, ["tab", "results"]);
+  if (!hasSwitchLanguage && !hasTabLanguage) {
+    return null;
+  }
+
+  return { tabKind };
+}
+
+function parseGoogleResultIndex(text) {
+  const normalized = normalizeSpeech(text);
+  if (!normalized) return null;
+
+  const numeric = normalized.match(/\b(\d+)(?:st|nd|rd|th)?\b/);
+  if (numeric) {
+    const value = Number(numeric[1]);
+    if (Number.isFinite(value) && value > 0) {
+      return Math.floor(value);
+    }
+  }
+
+  const ordinalEntries = Object.entries(ORDINAL_WORDS);
+  for (let i = 0; i < ordinalEntries.length; i += 1) {
+    const [word, value] = ordinalEntries[i];
+    if (normalized.includes(word)) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function extractGoogleDomainKeyword(text) {
+  const normalized = normalizeSpeech(text)
+    .replace(/\b(?:please|now)\b/g, " ")
+    .replace(/[.,!?;:]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!normalized) return "";
+
+  const patterns = [
+    /\bresult\s+(?:on|from|at)\s+([a-z0-9.\- ]+)$/i,
+    /\bopen\s+(?:the\s+)?result\s+(?:on|from|at)\s+([a-z0-9.\- ]+)$/i,
+    /\bopen\s+(?:the\s+)?([a-z0-9.\- ]+)\s+one$/i,
+    /\bopen\s+(?:the\s+)?([a-z0-9.\- ]+)\s+result$/i,
+    /\bopen\s+result\s+from\s+([a-z0-9.\- ]+)$/i
+  ];
+
+  for (let i = 0; i < patterns.length; i += 1) {
+    const match = normalized.match(patterns[i]);
+    if (!match) continue;
+    const cleaned = String(match[1] || "")
+      .replace(/\b(?:the|result|results|one|website|site|domain)\b/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (cleaned) {
+      return cleaned;
+    }
+  }
+
+  return "";
+}
+
+function parseHardcodedGoogleOpenOnIntent(text) {
+  const normalized = normalizeSpeech(text)
+    .replace(/[.,!?;:]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!normalized) return null;
+
+  const match = normalized.match(/^open\s+(?:the\s+)?result\s+(?:on|from|at)\s+(.+)$/i);
+  if (!match) return null;
+
+  const keyword = String(match[1] || "")
+    .replace(/\b(?:the|website|site|domain)\b/g, " ")
+    .replace(/[.,!?;:]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!keyword) return null;
+
+  return { domainKeyword: keyword };
+}
+
+function parseGoogleOpenResultIntent(text) {
+  const normalized = normalizeSpeech(text);
+  if (!normalized) return null;
+  if (!normalized.startsWith("open ")) return null;
+  if (!includesAny(normalized, ["result", "one", "link", "video", "videos", "image", "images", "photo", "photos", "picture", "pictures"])) {
+    return null;
+  }
+
+  const index = parseGoogleResultIndex(normalized);
+  const domainKeyword = extractGoogleDomainKeyword(normalized);
+  if (!index && !domainKeyword) {
+    return null;
+  }
+
+  return {
+    index: index || null,
+    domainKeyword: domainKeyword || ""
+  };
+}
+
+function maybeHandleGoogleSearchVoiceCommand(text) {
+  const normalized = normalizeSpeech(text);
+  if (!normalized) return false;
+
+  const hardcodedOpenOnIntent = parseHardcodedGoogleOpenOnIntent(normalized);
+  if (hardcodedOpenOnIntent) {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const activeTab = tabs && tabs.length ? tabs[0] : null;
+      if (!activeTab || !activeTab.id || !isGoogleSearchTabUrl(activeTab.url || "")) {
+        return;
+      }
+
+      chrome.tabs.sendMessage(
+        activeTab.id,
+        {
+          type: "aqual-google-search-action",
+          payload: {
+            action: "resolve-result",
+            domainKeyword: hardcodedOpenOnIntent.domainKeyword,
+            forceDomainMatch: true
+          }
+        },
+        { frameId: 0 },
+        (response) => {
+          if (chrome.runtime.lastError || !response || !response.ok || !response.url) {
+            return;
+          }
+          const finalUrl = prepareVoiceOpenResultUrl(response.url);
+          const finalHost = getHostnameSafe(finalUrl);
+          console.info("[aqual-google-open]", JSON.stringify({
+            mode: "open-result-on-domain",
+            rawUrl: response.url,
+            finalUrl,
+            blockedGoogleHost: !finalUrl || isGoogleHost(finalHost)
+          }));
+          if (!finalUrl || isGoogleHost(finalHost)) {
+            return;
+          }
+          const now = Date.now();
+          if (lastVoiceCommand.key === finalUrl && now - lastVoiceCommand.timestamp < 4000) {
+            return;
+          }
+          lastVoiceCommand = { key: finalUrl, timestamp: now };
+          navigateToResolvedResult(activeTab, finalUrl);
+        }
+      );
+    });
+    return true;
+  }
+
+  const searchIntent = parseGoogleSearchIntent(normalized);
+  if (searchIntent) {
+    const searchUrl = buildGoogleSearchUrl(searchIntent.query, "all");
+    const now = Date.now();
+    if (lastVoiceCommand.key === searchUrl && now - lastVoiceCommand.timestamp < 4000) {
+      return true;
+    }
+    lastGoogleSearchQuery = searchIntent.query;
+    lastVoiceCommand = { key: searchUrl, timestamp: now };
+    chrome.tabs.create({ url: searchUrl });
+    return true;
+  }
+
+  const openIntent = parseGoogleOpenResultIntent(normalized);
+  if (openIntent) {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const activeTab = tabs && tabs.length ? tabs[0] : null;
+      if (!activeTab || !activeTab.id || !isGoogleSearchTabUrl(activeTab.url || "")) {
+        return;
+      }
+
+      chrome.tabs.sendMessage(
+        activeTab.id,
+        {
+          type: "aqual-google-search-action",
+          payload: {
+            action: "resolve-result",
+            index: openIntent.index,
+            domainKeyword: openIntent.domainKeyword
+          }
+        },
+        { frameId: 0 },
+        (response) => {
+          if (chrome.runtime.lastError || !response || !response.ok || !response.url) {
+            return;
+          }
+          const finalUrl = prepareVoiceOpenResultUrl(response.url);
+          const finalHost = getHostnameSafe(finalUrl);
+          console.info("[aqual-google-open]", JSON.stringify({
+            mode: "open-result-by-index",
+            requestedIndex: openIntent.index,
+            rawUrl: response.url,
+            finalUrl,
+            blockedGoogleHost: !finalUrl || isGoogleHost(finalHost)
+          }));
+          if (!finalUrl || isGoogleHost(finalHost)) {
+            return;
+          }
+          const now = Date.now();
+          if (lastVoiceCommand.key === finalUrl && now - lastVoiceCommand.timestamp < 4000) {
+            return;
+          }
+          lastVoiceCommand = { key: finalUrl, timestamp: now };
+          navigateToResolvedResult(activeTab, finalUrl);
+        }
+      );
+    });
+    return true;
+  }
+
+  const tabIntent = parseGoogleTabIntent(normalized);
+  if (tabIntent) {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const activeTab = tabs && tabs.length ? tabs[0] : null;
+      let query = extractGoogleQueryFromUrl(activeTab ? activeTab.url : "");
+      if (!query) {
+        query = lastGoogleSearchQuery;
+      }
+      if (!query) {
+        return;
+      }
+
+      const tabUrl = buildGoogleSearchUrl(query, tabIntent.tabKind);
+      const now = Date.now();
+      if (lastVoiceCommand.key === tabUrl && now - lastVoiceCommand.timestamp < 4000) {
+        return;
+      }
+      lastGoogleSearchQuery = query;
+      lastVoiceCommand = { key: tabUrl, timestamp: now };
+
+      if (activeTab && activeTab.id) {
+        chrome.tabs.update(activeTab.id, { url: tabUrl });
+      } else {
+        chrome.tabs.create({ url: tabUrl });
+      }
+    });
+    return true;
+  }
+
+  return false;
 }
 
 const ON_INTENT_PATTERNS = [
@@ -2364,6 +2866,9 @@ function sendAudioControlMessage(payload, retryCount = 2) {
 
 function maybeHandleVoiceCommand(text) {
   if (!text) return;
+  if (maybeHandleGoogleSearchVoiceCommand(text)) {
+    return;
+  }
   if (maybeHandleVisualVoiceCommand(text)) {
     return;
   }
@@ -2483,6 +2988,68 @@ function tryFinalizeHoldTranscript(force = false) {
   }
 }
 
+function startAudioHoldSession(incomingHoldId = 0) {
+  const holdId = Number(incomingHoldId) || 0;
+  const now = Date.now();
+  const staleHold = holdActive && (holdRecordStopped || (now - holdStartedAt) > 20000);
+  if (holdActive && holdId && holdId === activeHoldId) {
+    return;
+  }
+  if (holdActive && !staleHold && (!holdId || holdId === activeHoldId)) {
+    return;
+  }
+  if (staleHold) {
+    holdActive = false;
+    activeHoldId = 0;
+    holdTranscript = "";
+    holdBestLength = 0;
+    holdPendingUntil = 0;
+    holdLastTranscriptAt = 0;
+    holdRecordStopped = false;
+  }
+  holdActive = true;
+  activeHoldId = holdId || now;
+  holdTranscript = "";
+  holdStartedAt = Date.now();
+  holdBestLength = 0;
+  holdPendingUntil = 0;
+  holdLastTranscriptAt = 0;
+  holdRecordStopped = false;
+  if (holdStopTimer) {
+    clearTimeout(holdStopTimer);
+    holdStopTimer = null;
+  }
+  clearHoldFinalizeTimer();
+  getPreferredAudioMode((preferredMode) => {
+    ensureOffscreenDocument().then(() => {
+      sendAudioControlMessage({
+        type: "aqual-audio-start",
+        mode: preferredMode
+      });
+    });
+  });
+}
+
+function stopAudioHoldSession(incomingHoldId = 0) {
+  const holdId = Number(incomingHoldId) || 0;
+  if (holdId && activeHoldId && holdId !== activeHoldId) {
+    return;
+  }
+  holdActive = false;
+  holdRecordStopped = false;
+  // Keep accepting late transcripts from the same utterance after key release.
+  holdPendingUntil = Date.now() + 15000;
+  scheduleFinalize(3500);
+  if (holdStopTimer) {
+    clearTimeout(holdStopTimer);
+  }
+  // Delay stop slightly so realtime STT can emit trailing words/finals.
+  holdStopTimer = setTimeout(() => {
+    sendAudioControlMessage({ type: "aqual-audio-stop" });
+    holdStopTimer = null;
+  }, 1200);
+}
+
 function captureScreenshot() {
   chrome.tabs.captureVisibleTab({ format: "png" }, (screenshotUrl) => {
     if (chrome.runtime.lastError || !screenshotUrl) {
@@ -2511,6 +3078,11 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
 });
 
 chrome.commands.onCommand.addListener((command) => {
+  if (command === "capture-screenshot") {
+    captureScreenshot();
+    return;
+  }
+
   getSettings((settings) => {
     let updates = {};
     if (command === "toggle-image-veil") {
@@ -2542,10 +3114,6 @@ chrome.commands.onCommand.addListener((command) => {
       });
     }
   });
-
-  if (command === "capture-screenshot") {
-    captureScreenshot();
-  }
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -2559,64 +3127,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.type === "aqual-audio-hold") {
     if (message.action === "start") {
-      const incomingHoldId = Number(message.holdId) || 0;
-      const now = Date.now();
-      const staleHold = holdActive && (holdRecordStopped || (now - holdStartedAt) > 20000);
-      if (holdActive && incomingHoldId && incomingHoldId === activeHoldId) {
-        return;
-      }
-      if (holdActive && !staleHold && (!incomingHoldId || incomingHoldId === activeHoldId)) {
-        return;
-      }
-      if (staleHold) {
-        holdActive = false;
-        activeHoldId = 0;
-        holdTranscript = "";
-        holdBestLength = 0;
-        holdPendingUntil = 0;
-        holdLastTranscriptAt = 0;
-        holdRecordStopped = false;
-      }
-      holdActive = true;
-      activeHoldId = incomingHoldId || now;
-      holdTranscript = "";
-      holdStartedAt = Date.now();
-      holdBestLength = 0;
-      holdPendingUntil = 0;
-      holdLastTranscriptAt = 0;
-      holdRecordStopped = false;
-      if (holdStopTimer) {
-        clearTimeout(holdStopTimer);
-        holdStopTimer = null;
-      }
-      clearHoldFinalizeTimer();
-      getPreferredAudioMode((preferredMode) => {
-        ensureOffscreenDocument().then(() => {
-          sendAudioControlMessage({
-            type: "aqual-audio-start",
-            mode: preferredMode
-          });
-        });
-      });
+      startAudioHoldSession(message.holdId);
     }
     if (message.action === "stop") {
-      const incomingHoldId = Number(message.holdId) || 0;
-      if (incomingHoldId && activeHoldId && incomingHoldId !== activeHoldId) {
-        return;
-      }
-      holdActive = false;
-      holdRecordStopped = false;
-      // Keep accepting late transcripts from the same utterance after key release.
-      holdPendingUntil = Date.now() + 15000;
-      scheduleFinalize(3500);
-      if (holdStopTimer) {
-        clearTimeout(holdStopTimer);
-      }
-      // Delay stop slightly so realtime STT can emit trailing words/finals.
-      holdStopTimer = setTimeout(() => {
-        sendAudioControlMessage({ type: "aqual-audio-stop" });
-        holdStopTimer = null;
-      }, 1200);
+      stopAudioHoldSession(message.holdId);
     }
   }
   if (message.type === "aqual-audio-transcript") {
