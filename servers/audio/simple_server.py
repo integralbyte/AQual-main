@@ -1,14 +1,27 @@
-from pathlib import Path
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
 import httpx
+import sys
+from pathlib import Path
 
-ELEVENLABS_API_KEY = ""
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from servers.config import get_env
+
+ELEVENLABS_API_KEY = get_env("ELEVENLABS_API_KEY", "")
 
 app = FastAPI()
 
 @app.get("/api/token")
 async def get_token():
+    if not ELEVENLABS_API_KEY:
+        return JSONResponse(
+            status_code=500,
+            content={"error": "ELEVENLABS_API_KEY is not configured. Set it in .env."}
+        )
+
     async with httpx.AsyncClient() as client:
         # Try primary endpoint
         url = "https://api.elevenlabs.io/v1/single-use-token/realtime_scribe"

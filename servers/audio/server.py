@@ -1,6 +1,6 @@
-from pathlib import Path
 import os
 import sys
+from pathlib import Path
 
 # Silence logs before imports
 os.environ["TQDM_DISABLE"] = "1"
@@ -18,9 +18,17 @@ import httpx
 import websockets
 import ssl
 
-# ElevenLabs API Key
-ELEVENLABS_API_KEY = ""
-ELEVENLABS_WS_URL = "wss://api.elevenlabs.io/v1/speech-to-text/realtime?model_id=scribe_v2_realtime&language_code=en"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from servers.config import get_env
+
+ELEVENLABS_API_KEY = get_env("ELEVENLABS_API_KEY", "")
+ELEVENLABS_WS_URL = get_env(
+    "ELEVENLABS_WS_URL",
+    "wss://api.elevenlabs.io/v1/speech-to-text/realtime?model_id=scribe_v2_realtime&language_code=en"
+)
 
 # --- Configuration ---
 MODEL_NAME = "mlx-community/whisper-tiny"
@@ -149,6 +157,11 @@ async def websocket_elevenlabs(websocket: WebSocket):
     await websocket.accept()
     print("🎧 Client connected (ElevenLabs)")
 
+    if not ELEVENLABS_API_KEY:
+        await websocket.send_json({"error": "ELEVENLABS_API_KEY is not configured. Set it in .env."})
+        await websocket.close(code=1011)
+        return
+
     try:
         ssl_context = ssl.create_default_context()
         ssl_context.check_hostname = False
@@ -189,6 +202,12 @@ async def websocket_elevenlabs(websocket: WebSocket):
 # Generate ElevenLabs single-use token
 @app.get("/api/token")
 async def get_token():
+    if not ELEVENLABS_API_KEY:
+        return JSONResponse(
+            status_code=500,
+            content={"error": "ELEVENLABS_API_KEY is not configured. Set it in .env."}
+        )
+
     async with httpx.AsyncClient() as client:
         response = await client.post(
             "https://api.elevenlabs.io/v1/single-use-token/realtime_scribe",
