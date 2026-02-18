@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, Response
 from werkzeug.utils import secure_filename
 from docx import Document
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
@@ -31,6 +31,9 @@ app.logger.setLevel("INFO")
 GEMINI_API_KEY = get_env("GEMINI_API_KEY", "")
 GEMINI_MODEL = "gemini-3-flash-preview"
 GEMINI_THINKING_LEVEL = "LOW"
+ELEVENLABS_API_KEY = get_env("ELEVENLABS_API_KEY", "")
+ELEVENLABS_TTS_VOICE_ID = get_env("ELEVENLABS_TTS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
+ELEVENLABS_TTS_MODEL_ID = get_env("ELEVENLABS_TTS_MODEL_ID", "eleven_multilingual_v2")
 
 
 def get_gemini_client():
@@ -61,6 +64,11 @@ def add_cors_headers(response):
 def _log_gemini_event(event: str, **fields):
     payload = {"event": event, **fields}
     app.logger.info("[gemini] %s", json.dumps(payload, ensure_ascii=True, separators=(",", ":")))
+
+
+def _log_tts_event(event: str, **fields):
+    payload = {"event": event, **fields}
+    app.logger.info("[tts] %s", json.dumps(payload, ensure_ascii=True, separators=(",", ":")))
 
 
 def _extract_host(url: str) -> str:
@@ -958,28 +966,28 @@ def describe_web_image():
         else:
             input_mode = "unknown"
 
-        context_lines = []
-        for key, label in (
-            ("altText", "ALT text"),
-            ("titleText", "Title attribute"),
-            ("contextText", "Nearby context"),
-            ("pageTitle", "Page title"),
-            ("pageUrl", "Page URL"),
-        ):
-            value = (data.get(key) or "").strip()
-            if value:
-                context_lines.append(f"{label}: {value}")
-        context_block = "\n".join(context_lines) if context_lines else "None provided."
+        alt_text = (data.get("altText") or "").strip()
+        title_text = (data.get("titleText") or "").strip()
+        nearby_text = (data.get("contextText") or "").strip()
+        hint_parts = []
+        if alt_text:
+            hint_parts.append(f"ALT text: {alt_text[:180]}")
+        if title_text and title_text.lower() != alt_text.lower():
+            hint_parts.append(f"Title: {title_text[:140]}")
+        if nearby_text:
+            hint_parts.append(f"Nearby text: {nearby_text[:180]}")
+        hint_block = " | ".join(hint_parts)
 
-        prompt = f"""Describe this webpage image for a visually impaired user.
-Use the image as the primary source of truth, then use the extra context if helpful.
+        prompt = """Describe this image for a visually impaired person. Provide a clear, detailed description that captures:
+1. The main subject or content of the image
+2. Important visual details (colors, layout, text if any)
+3. The context or purpose of the image in a document
 
-Context:
-{context_block}
+Keep the description concise but informative (2-4 sentences). Return ONLY valid JSON in this exact format:
+{"description": "Your description here"}"""
 
-Write 2-4 clear sentences.
-Return ONLY valid JSON in this exact format:
-{{"description": "your description"}}"""
+        if hint_block:
+            prompt += f"\n\nOptional on-page hints (can be wrong): {hint_block}"
 
         result = _generate_ai_json(
             client,
@@ -1000,7 +1008,8 @@ Return ONLY valid JSON in this exact format:
                 "image_bytes": len(image_bytes),
                 "mime_type": content_type,
                 "prompt_chars": len(prompt),
-                "context_chars": len(context_block),
+                "hint_chars": len(hint_block),
+                "prompt_style": "bionic_like",
             },
         )
         description = (result.get("description") or "").strip()
@@ -1107,6 +1116,101 @@ Return ONLY valid JSON in this exact format:
     except json.JSONDecodeError:
         return jsonify({'error': 'Failed to parse AI response'}), 500
     except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/speak-text', methods=['POST', 'OPTIONS'])
+def speak_text():
+    """Convert selected text to speech using ElevenLabs."""
+    if request.method == 'OPTIONS':
+        return _set_cors_headers(jsonify({'ok': True}))
+
+    data = request.get_json() or {}
+    text = (data.get("text") or "").strip()
+    if not text:
+        return jsonify({'error': 'No text provided'}), 400
+
+    if not ELEVENLABS_API_KEY:
+        return jsonify({'error': 'ELEVENLABS_API_KEY is not configured. Set it in .env.'}), 500
+
+    voice_id = (data.get("voiceId") or ELEVENLABS_TTS_VOICE_ID or "").strip()
+    if not voice_id:
+        return jsonify({'error': 'No ElevenLabs voice ID configured'}), 500
+
+    text = text[:2500]
+    request_id = uuid.uuid4().hex[:10]
+    started_at = time.perf_counter()
+    _log_tts_event(
+        "request_start",
+        request_id=request_id,
+        route="/speak-text",
+        voice_id=voice_id,
+        model_id=ELEVENLABS_TTS_MODEL_ID,
+        text_chars=len(text),
+    )
+
+    payload = {
+        "text": text,
+        "model_id": ELEVENLABS_TTS_MODEL_ID
+    }
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{urllib.parse.quote(voice_id, safe='')}/stream"
+    headers = {
+        "xi-api-key": ELEVENLABS_API_KEY,
+        "Accept": "audio/mpeg",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        response = httpx.post(url, json=payload, headers=headers, timeout=45.0)
+        if response.status_code >= 400:
+            duration_ms = round((time.perf_counter() - started_at) * 1000, 1)
+            _log_tts_event(
+                "request_error",
+                request_id=request_id,
+                route="/speak-text",
+                duration_ms=duration_ms,
+                status_code=response.status_code,
+                body_preview=(response.text or "")[:200],
+            )
+            return jsonify({'error': f'ElevenLabs TTS failed ({response.status_code})'}), 502
+
+        audio_bytes = response.content
+        duration_ms = round((time.perf_counter() - started_at) * 1000, 1)
+        _log_tts_event(
+            "request_success",
+            request_id=request_id,
+            route="/speak-text",
+            duration_ms=duration_ms,
+            status_code=response.status_code,
+            audio_bytes=len(audio_bytes),
+        )
+        return Response(
+            audio_bytes,
+            mimetype="audio/mpeg",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    except httpx.RequestError as e:
+        duration_ms = round((time.perf_counter() - started_at) * 1000, 1)
+        _log_tts_event(
+            "request_error",
+            request_id=request_id,
+            route="/speak-text",
+            duration_ms=duration_ms,
+            error_type=type(e).__name__,
+            error_message=str(e)[:240],
+        )
+        return jsonify({'error': 'Could not reach ElevenLabs TTS service'}), 502
+    except Exception as e:
+        duration_ms = round((time.perf_counter() - started_at) * 1000, 1)
+        _log_tts_event(
+            "request_error",
+            request_id=request_id,
+            route="/speak-text",
+            duration_ms=duration_ms,
+            error_type=type(e).__name__,
+            error_message=str(e)[:240],
+        )
         return jsonify({'error': str(e)}), 500
 
 
