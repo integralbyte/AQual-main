@@ -9,16 +9,195 @@ import io
 import html
 import json
 import base64
+import sys
+import time
+import uuid
+import urllib.parse
+from pathlib import Path
+import httpx
 from google import genai
 from google.genai import types
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from servers.config import get_env
+
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+app.logger.setLevel("INFO")
 
-GEMINI_API_KEY = "REDACTED_GCP_API_KEY"
+GEMINI_API_KEY = get_env("GEMINI_API_KEY", "")
+GEMINI_MODEL = "gemini-3-flash-preview"
+GEMINI_THINKING_LEVEL = "LOW"
+
+
+def get_gemini_client():
+    if not GEMINI_API_KEY:
+        raise RuntimeError("GEMINI_API_KEY is not configured. Set it in .env.")
+    return genai.Client(api_key=GEMINI_API_KEY)
 
 # Store images temporarily for the session
 image_store = {}
+
+
+def _set_cors_headers(response):
+    origin = request.headers.get("Origin")
+    response.headers["Access-Control-Allow-Origin"] = origin or "*"
+    response.headers["Vary"] = "Origin"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+    if request.headers.get("Access-Control-Request-Private-Network") == "true":
+        response.headers["Access-Control-Allow-Private-Network"] = "true"
+    return response
+
+
+@app.after_request
+def add_cors_headers(response):
+    return _set_cors_headers(response)
+
+
+def _log_gemini_event(event: str, **fields):
+    payload = {"event": event, **fields}
+    app.logger.info("[gemini] %s", json.dumps(payload, ensure_ascii=True, separators=(",", ":")))
+
+
+def _extract_host(url: str) -> str:
+    url = (url or "").strip()
+    if not url:
+        return ""
+    try:
+        return urllib.parse.urlparse(url).netloc or ""
+    except Exception:
+        return ""
+
+
+def _clean_ai_json_text(response_text: str) -> str:
+    response_text = (response_text or "").strip()
+    if response_text.startswith("```"):
+        lines = response_text.split("\n")
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        response_text = "\n".join(lines).strip()
+    return response_text
+
+
+def _decode_data_url(data_url: str):
+    match = re.match(r"^data:(?P<mime>[^;,]+)?(?P<b64>;base64)?,(?P<data>.*)$", data_url, re.DOTALL)
+    if not match:
+        raise ValueError("Invalid data URL")
+
+    mime_type = (match.group("mime") or "image/png").strip()
+    payload = match.group("data") or ""
+    if match.group("b64"):
+        image_bytes = base64.b64decode(payload)
+    else:
+        image_bytes = urllib.parse.unquote_to_bytes(payload)
+    return image_bytes, mime_type
+
+
+def _load_web_image_payload(data: dict):
+    image_data = data.get("imageData")
+    content_type = (data.get("contentType") or "").split(";", 1)[0].strip()
+    image_url = (data.get("imageUrl") or "").strip()
+
+    if image_data:
+        image_bytes = base64.b64decode(image_data)
+        if not content_type:
+            content_type = "image/jpeg"
+    elif image_url:
+        if image_url.startswith("data:"):
+            image_bytes, content_type = _decode_data_url(image_url)
+        else:
+            response = httpx.get(
+                image_url,
+                follow_redirects=True,
+                timeout=20.0,
+                headers={"User-Agent": "AQual/1.0"},
+            )
+            response.raise_for_status()
+            image_bytes = response.content
+            content_type = (response.headers.get("content-type") or "image/jpeg").split(";", 1)[0].strip()
+    else:
+        raise ValueError("No image input provided")
+
+    if not image_bytes:
+        raise ValueError("Image is empty")
+    if len(image_bytes) > 15 * 1024 * 1024:
+        raise ValueError("Image is too large")
+    if not content_type.startswith("image/"):
+        content_type = "image/jpeg"
+
+    return image_bytes, content_type
+
+
+def _generate_ai_json(client, parts, request_kind="generic", log_context=None):
+    request_id = uuid.uuid4().hex[:10]
+    started_at = time.perf_counter()
+    context = dict(log_context or {})
+    _log_gemini_event(
+        "request_start",
+        request_id=request_id,
+        request_kind=request_kind,
+        model=GEMINI_MODEL,
+        thinking_level=GEMINI_THINKING_LEVEL,
+        **context,
+    )
+
+    contents = [
+        types.Content(
+            role="user",
+            parts=parts,
+        ),
+    ]
+    generate_content_config = types.GenerateContentConfig(
+        thinking_config=types.ThinkingConfig(
+            thinking_level=GEMINI_THINKING_LEVEL,
+        ),
+    )
+
+    response_text = ""
+    chunk_count = 0
+    try:
+        for chunk in client.models.generate_content_stream(
+            model=GEMINI_MODEL,
+            contents=contents,
+            config=generate_content_config,
+        ):
+            if chunk.text:
+                response_text += chunk.text
+                chunk_count += 1
+
+        response_text = _clean_ai_json_text(response_text)
+        parsed = json.loads(response_text)
+        duration_ms = round((time.perf_counter() - started_at) * 1000, 1)
+        _log_gemini_event(
+            "request_success",
+            request_id=request_id,
+            request_kind=request_kind,
+            duration_ms=duration_ms,
+            response_chars=len(response_text),
+            chunk_count=chunk_count,
+            **context,
+        )
+        return parsed
+    except Exception as e:
+        duration_ms = round((time.perf_counter() - started_at) * 1000, 1)
+        _log_gemini_event(
+            "request_error",
+            request_id=request_id,
+            request_kind=request_kind,
+            duration_ms=duration_ms,
+            error_type=type(e).__name__,
+            error_message=str(e)[:240],
+            response_chars=len(response_text),
+            chunk_count=chunk_count,
+            **context,
+        )
+        raise
 
 
 class BionicHtmlConverter:
@@ -525,7 +704,7 @@ def summarize_paragraph():
         return jsonify({'error': 'Empty text'}), 400
 
     try:
-        client = genai.Client(api_key=GEMINI_API_KEY)
+        client = get_gemini_client()
 
         prompt = f"""Summarize the following paragraph into concise bullet points.
 Return ONLY valid JSON in this exact format, nothing else:
@@ -545,7 +724,7 @@ Paragraph:
 
         generate_content_config = types.GenerateContentConfig(
             thinking_config=types.ThinkingConfig(
-                thinking_level="HIGH",
+                thinking_level="LOW",
             ),
         )
 
@@ -588,7 +767,7 @@ def rephrase_paragraph():
     writing_sample = data.get('writingSample', '').strip()
 
     try:
-        client = genai.Client(api_key=GEMINI_API_KEY)
+        client = get_gemini_client()
 
         if writing_sample:
             prompt = f"""You are a writing assistant. Rephrase the following paragraph to match the writing style, vocabulary level, and tone of the provided writing sample.
@@ -637,7 +816,7 @@ The "terms" array should contain any words or phrases in your rephrased text tha
 
         generate_content_config = types.GenerateContentConfig(
             thinking_config=types.ThinkingConfig(
-                thinking_level="HIGH",
+                thinking_level="LOW",
             ),
         )
 
@@ -719,7 +898,8 @@ def describe_image():
     image_data = image_store[image_id]
 
     try:
-        client = genai.Client(api_key=GEMINI_API_KEY)
+        client = get_gemini_client()
+        image_bytes = base64.b64decode(image_data['data'])
 
         prompt = """Describe this image for a visually impaired person. Provide a clear, detailed description that captures:
 1. The main subject or content of the image
@@ -729,44 +909,201 @@ def describe_image():
 Keep the description concise but informative (2-4 sentences). Return ONLY valid JSON in this exact format:
 {"description": "Your description here"}"""
 
-        contents = [
-            types.Content(
-                role="user",
-                parts=[
-                    types.Part.from_bytes(
-                        data=base64.b64decode(image_data['data']),
-                        mime_type=image_data['content_type']
-                    ),
-                    types.Part.from_text(text=prompt),
-                ],
-            ),
-        ]
-
-        generate_content_config = types.GenerateContentConfig(
-            thinking_config=types.ThinkingConfig(
-                thinking_level="HIGH",
-            ),
+        result = _generate_ai_json(
+            client,
+            [
+                types.Part.from_bytes(
+                    data=image_bytes,
+                    mime_type=image_data['content_type']
+                ),
+                types.Part.from_text(text=prompt),
+            ],
+            request_kind="bionic_doc_image_description",
+            log_context={
+                "route": "/describe-image",
+                "source": "bionic_doc",
+                "image_id": image_id,
+                "image_bytes": len(image_bytes),
+                "mime_type": image_data.get("content_type", ""),
+                "prompt_chars": len(prompt),
+            },
         )
-
-        response_text = ""
-        for chunk in client.models.generate_content_stream(
-            model="gemini-3-flash-preview",
-            contents=contents,
-            config=generate_content_config,
-        ):
-            if chunk.text:
-                response_text += chunk.text
-
-        response_text = response_text.strip()
-
-        # Clean up response - remove markdown code blocks if present
-        if response_text.startswith("```"):
-            lines = response_text.split("\n")
-            response_text = "\n".join(lines[1:-1] if lines[-1] == "```" else lines[1:])
-
-        result = json.loads(response_text)
         return jsonify(result)
 
+    except json.JSONDecodeError:
+        return jsonify({'error': 'Failed to parse AI response'}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/describe-web-image', methods=['POST', 'OPTIONS'])
+def describe_web_image():
+    """Generate an accessibility description for an arbitrary webpage image."""
+    if request.method == 'OPTIONS':
+        return _set_cors_headers(jsonify({'ok': True}))
+
+    data = request.get_json() or {}
+    raw_image_url = (data.get("imageUrl") or "").strip()
+
+    try:
+        image_bytes, content_type = _load_web_image_payload(data)
+        client = get_gemini_client()
+
+        if data.get("imageData"):
+            input_mode = "base64"
+        elif raw_image_url.startswith("data:"):
+            input_mode = "data_url"
+        elif raw_image_url:
+            input_mode = "remote_url"
+        else:
+            input_mode = "unknown"
+
+        context_lines = []
+        for key, label in (
+            ("altText", "ALT text"),
+            ("titleText", "Title attribute"),
+            ("contextText", "Nearby context"),
+            ("pageTitle", "Page title"),
+            ("pageUrl", "Page URL"),
+        ):
+            value = (data.get(key) or "").strip()
+            if value:
+                context_lines.append(f"{label}: {value}")
+        context_block = "\n".join(context_lines) if context_lines else "None provided."
+
+        prompt = f"""Describe this webpage image for a visually impaired user.
+Use the image as the primary source of truth, then use the extra context if helpful.
+
+Context:
+{context_block}
+
+Write 2-4 clear sentences.
+Return ONLY valid JSON in this exact format:
+{{"description": "your description"}}"""
+
+        result = _generate_ai_json(
+            client,
+            [
+                types.Part.from_bytes(
+                    data=image_bytes,
+                    mime_type=content_type,
+                ),
+                types.Part.from_text(text=prompt),
+            ],
+            request_kind="web_image_description",
+            log_context={
+                "route": "/describe-web-image",
+                "source": "webpage",
+                "input_mode": input_mode,
+                "image_host": _extract_host(raw_image_url),
+                "page_host": _extract_host(data.get("pageUrl", "")),
+                "image_bytes": len(image_bytes),
+                "mime_type": content_type,
+                "prompt_chars": len(prompt),
+                "context_chars": len(context_block),
+            },
+        )
+        description = (result.get("description") or "").strip()
+        if not description:
+            return jsonify({'error': 'Failed to generate description'}), 500
+        return jsonify({"description": description})
+
+    except httpx.HTTPStatusError as e:
+        return jsonify({'error': f'Failed to fetch image URL ({e.response.status_code})'}), 400
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except json.JSONDecodeError:
+        return jsonify({'error': 'Failed to parse AI response'}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/ask-web-image', methods=['POST', 'OPTIONS'])
+def ask_web_image():
+    """Answer follow-up questions about a webpage image."""
+    if request.method == 'OPTIONS':
+        return _set_cors_headers(jsonify({'ok': True}))
+
+    data = request.get_json() or {}
+    raw_image_url = (data.get("imageUrl") or "").strip()
+    question = (data.get("question") or "").strip()
+    if not question:
+        return jsonify({'error': 'No follow-up question provided'}), 400
+
+    try:
+        image_bytes, content_type = _load_web_image_payload(data)
+        client = get_gemini_client()
+
+        if data.get("imageData"):
+            input_mode = "base64"
+        elif raw_image_url.startswith("data:"):
+            input_mode = "data_url"
+        elif raw_image_url:
+            input_mode = "remote_url"
+        else:
+            input_mode = "unknown"
+
+        base_description = (data.get("description") or "").strip()
+        history = data.get("history") or []
+        history_lines = []
+        for item in history[-8:]:
+            if not isinstance(item, dict):
+                continue
+            role = (item.get("role") or "").strip().lower()
+            content = (item.get("content") or "").strip()
+            if role not in ("user", "assistant") or not content:
+                continue
+            history_lines.append(f"{role.upper()}: {content[:600]}")
+        history_block = "\n".join(history_lines) if history_lines else "None."
+
+        prompt = f"""You are helping a visually impaired user understand one image from a webpage.
+
+Base description:
+{base_description or "None."}
+
+Conversation so far:
+{history_block}
+
+User follow-up question:
+{question}
+
+Answer the question directly and clearly in 1-3 short paragraphs.
+If the question cannot be answered from the image, say so briefly.
+Return ONLY valid JSON in this exact format:
+{{"answer": "your answer"}}"""
+
+        result = _generate_ai_json(
+            client,
+            [
+                types.Part.from_bytes(
+                    data=image_bytes,
+                    mime_type=content_type,
+                ),
+                types.Part.from_text(text=prompt),
+            ],
+            request_kind="web_image_followup",
+            log_context={
+                "route": "/ask-web-image",
+                "source": "webpage",
+                "input_mode": input_mode,
+                "image_host": _extract_host(raw_image_url),
+                "page_host": _extract_host(data.get("pageUrl", "")),
+                "image_bytes": len(image_bytes),
+                "mime_type": content_type,
+                "prompt_chars": len(prompt),
+                "question_chars": len(question),
+                "history_items": len(history_lines),
+            },
+        )
+        answer = (result.get("answer") or "").strip()
+        if not answer:
+            return jsonify({'error': 'Failed to generate answer'}), 500
+        return jsonify({"answer": answer})
+
+    except httpx.HTTPStatusError as e:
+        return jsonify({'error': f'Failed to fetch image URL ({e.response.status_code})'}), 400
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
     except json.JSONDecodeError:
         return jsonify({'error': 'Failed to parse AI response'}), 500
     except Exception as e:
