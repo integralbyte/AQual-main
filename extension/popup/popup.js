@@ -16,7 +16,6 @@ const DEFAULTS = {
   cursorEnabled: false,
   cursorType: "arrow-large.png",
   highContrastEnabled: false,
-  adaptiveContrastEnabled: false,
   nightModeEnabled: false,
   dimmingEnabled: false,
   dimmingLevel: 0.25,
@@ -74,6 +73,8 @@ const DOC_SERVER_BASE = "http://localhost:8080";
 let state = { ...DEFAULTS };
 let scrollPersistTimer = null;
 let activeTab = "visual";
+let visualSearchActive = false;
+let visualSectionOpenSnapshot = null;
 
 let audioWs = null;
 let audioContext = null;
@@ -85,6 +86,17 @@ let currentMode = "elevenlabs";
 let fullTranscript = "";
 let transcriptAutoScroll = true;
 let isRecording = false;
+
+function normalizeAudioMode(mode) {
+  const token = String(mode || "").toLowerCase().replace(/[\s_-]+/g, "");
+  if (token === "local" || token === "localwhisper" || token === "whisper") {
+    return "local";
+  }
+  if (token === "elevenlabs" || token === "elevenlab" || token === "eleven" || token === "11labs") {
+    return "elevenlabs";
+  }
+  return "elevenlabs";
+}
 
 function setRecordingState(recording) {
   const changed = isRecording !== recording;
@@ -103,11 +115,18 @@ function setRecordingState(recording) {
 }
 
 function applyModeSelection(mode) {
-  currentMode = mode;
+  const normalizedMode = normalizeAudioMode(mode);
+  currentMode = normalizedMode;
   document.querySelectorAll(".mode-button").forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.mode === mode);
+    btn.classList.toggle("active", btn.dataset.mode === normalizedMode);
   });
-  chrome.storage.sync.set({ aqualAudioMode: mode });
+  chrome.storage.sync.set({ aqualAudioMode: normalizedMode });
+  chrome.storage.local.set({ aqualAudioMode: normalizedMode });
+  chrome.runtime.sendMessage({ type: "aqual-audio-mode", mode: normalizedMode }, () => {
+    if (chrome.runtime.lastError) {
+      // Ignore if background listener is temporarily unavailable.
+    }
+  });
 }
 
 function applyTheme(theme) {
@@ -572,8 +591,12 @@ function bindEvents() {
 
   document.querySelectorAll("details.group").forEach((section) => {
     section.addEventListener("toggle", () => {
+      if (visualSearchActive) {
+        updateToggleSectionsLabel();
+        return;
+      }
       const openState = {};
-      document.querySelectorAll("details.group").forEach((item) => {
+      document.querySelectorAll("#tab-visual details.group").forEach((item) => {
         if (item.id) {
           openState[item.id] = item.open;
         }
@@ -642,9 +665,22 @@ function bindEvents() {
   const toggleSections = byId("toggleSections");
   if (toggleSections) {
     toggleSections.addEventListener("click", () => {
-      const sections = Array.from(document.querySelectorAll("details.group"));
+      if (visualSearchActive) {
+        return;
+      }
+      const sections = Array.from(document.querySelectorAll("#tab-visual details.group"));
       const allOpen = sections.length > 0 && sections.every((section) => section.open);
       setAllSections(!allOpen);
+    });
+  }
+
+  const visualSearchInput = byId("visualSearchInput");
+  if (visualSearchInput) {
+    visualSearchInput.addEventListener("input", (event) => {
+      applyVisualSearchFilter(event.target.value);
+    });
+    visualSearchInput.addEventListener("search", (event) => {
+      applyVisualSearchFilter(event.target.value);
     });
   }
 
@@ -814,13 +850,6 @@ function bindEvents() {
     pushStateToActive();
   });
 
-  byId("adaptiveContrastEnabled").addEventListener("change", (e) => {
-    state.adaptiveContrastEnabled = e.target.checked;
-    setToggleText("adaptiveContrastEnabledState", state.adaptiveContrastEnabled);
-    persistSettings({ adaptiveContrastEnabled: state.adaptiveContrastEnabled });
-    pushStateToActive();
-  });
-
   byId("nightModeEnabled").addEventListener("change", (e) => {
     state.nightModeEnabled = e.target.checked;
     setToggleText("nightModeEnabledState", state.nightModeEnabled);
@@ -883,6 +912,11 @@ function bindEvents() {
   });
 
   byId("resetDefaults").addEventListener("click", () => {
+    const searchInput = byId("visualSearchInput");
+    if (searchInput) {
+      searchInput.value = "";
+    }
+    applyVisualSearchFilter("");
     state = { ...DEFAULTS };
     chrome.storage.sync.set({ ...DEFAULTS }, () => {
       hydrateUI(state);
@@ -929,7 +963,6 @@ function hydrateUI(settings) {
   byId("reducedCrowdingEnabled").checked = state.reducedCrowdingEnabled;
   byId("drawingEnabled").checked = state.drawingEnabled;
   byId("highContrastEnabled").checked = state.highContrastEnabled;
-  byId("adaptiveContrastEnabled").checked = state.adaptiveContrastEnabled;
   byId("nightModeEnabled").checked = state.nightModeEnabled;
   byId("dimmingEnabled").checked = state.dimmingEnabled;
   byId("blueLightEnabled").checked = state.blueLightEnabled;
@@ -958,7 +991,6 @@ function hydrateUI(settings) {
   setToggleText("reducedCrowdingEnabledState", state.reducedCrowdingEnabled);
   setToggleText("drawingEnabledState", state.drawingEnabled);
   setToggleText("highContrastEnabledState", state.highContrastEnabled);
-  setToggleText("adaptiveContrastEnabledState", state.adaptiveContrastEnabled);
   setToggleText("nightModeEnabledState", state.nightModeEnabled);
   setToggleText("dimmingEnabledState", state.dimmingEnabled);
   setToggleText("blueLightEnabledState", state.blueLightEnabled);
@@ -994,22 +1026,123 @@ function restoreUiState() {
 function updateToggleSectionsLabel() {
   const button = byId("toggleSections");
   if (!button) return;
-  const sections = Array.from(document.querySelectorAll("details.group"));
+  if (visualSearchActive) {
+    button.textContent = "Search active";
+    return;
+  }
+  const sections = Array.from(document.querySelectorAll("#tab-visual details.group"));
   const allOpen = sections.length > 0 && sections.every((section) => section.open);
   button.textContent = allOpen ? "Collapse all" : "Expand all";
 }
 
 function setAllSections(open) {
-  const sections = Array.from(document.querySelectorAll("details.group"));
-  const state = {};
+  const sections = Array.from(document.querySelectorAll("#tab-visual details.group"));
+  const openState = {};
   sections.forEach((section) => {
+    if (section.style.display === "none") {
+      return;
+    }
     section.open = open;
     if (section.id) {
-      state[section.id] = open;
+      openState[section.id] = open;
     }
   });
-  chrome.storage.sync.set({ aqualUiSections: state });
+  chrome.storage.sync.set({ aqualUiSections: openState });
   updateToggleSectionsLabel();
+}
+
+function getVisualSections() {
+  return Array.from(document.querySelectorAll("#tab-visual details.group"));
+}
+
+function normalizeSearchValue(value) {
+  return String(value || "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function getControlSearchText(control, sectionSummaryText) {
+  if (!control) return "";
+  if (!control.dataset.aqualSearchText) {
+    const rawText = `${sectionSummaryText} ${control.textContent || ""}`;
+    control.dataset.aqualSearchText = normalizeSearchValue(rawText);
+  }
+  return control.dataset.aqualSearchText;
+}
+
+function setVisualSearchActive(active) {
+  visualSearchActive = active;
+  const toggleButton = byId("toggleSections");
+  if (toggleButton) {
+    toggleButton.disabled = active;
+  }
+  updateToggleSectionsLabel();
+}
+
+function applyVisualSearchFilter(rawQuery) {
+  const query = normalizeSearchValue(rawQuery);
+  const sections = getVisualSections();
+  const emptyState = byId("visualSearchEmpty");
+
+  if (!query) {
+    sections.forEach((section) => {
+      section.style.display = "";
+      const controls = Array.from(section.querySelectorAll(":scope > .control"));
+      controls.forEach((control) => {
+        control.style.display = "";
+      });
+    });
+
+    if (visualSectionOpenSnapshot) {
+      sections.forEach((section) => {
+        if (section.id && Object.prototype.hasOwnProperty.call(visualSectionOpenSnapshot, section.id)) {
+          section.open = Boolean(visualSectionOpenSnapshot[section.id]);
+        }
+      });
+    }
+
+    visualSectionOpenSnapshot = null;
+    setVisualSearchActive(false);
+    if (emptyState) {
+      emptyState.hidden = true;
+    }
+    return;
+  }
+
+  if (!visualSearchActive) {
+    visualSectionOpenSnapshot = {};
+    sections.forEach((section) => {
+      if (section.id) {
+        visualSectionOpenSnapshot[section.id] = section.open;
+      }
+    });
+  }
+
+  setVisualSearchActive(true);
+
+  let totalMatches = 0;
+  sections.forEach((section) => {
+    const summaryEl = section.querySelector("summary");
+    const sectionSummaryText = normalizeSearchValue(summaryEl ? summaryEl.textContent : "");
+    const controls = Array.from(section.querySelectorAll(":scope > .control"));
+    let sectionMatchCount = 0;
+
+    controls.forEach((control) => {
+      const text = getControlSearchText(control, sectionSummaryText);
+      const isMatch = text.includes(query);
+      control.style.display = isMatch ? "" : "none";
+      if (isMatch) {
+        sectionMatchCount += 1;
+      }
+    });
+
+    const hasMatch = sectionMatchCount > 0;
+    section.style.display = hasMatch ? "" : "none";
+    section.open = hasMatch;
+    totalMatches += sectionMatchCount;
+  });
+
+  if (emptyState) {
+    emptyState.hidden = totalMatches !== 0;
+  }
 }
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -1021,9 +1154,12 @@ document.addEventListener("DOMContentLoaded", () => {
     refreshMicPermissionState();
   });
 
-  chrome.storage.sync.get({ aqualAudioMode: "elevenlabs", aqualTheme: "dark" }, (stored) => {
-    applyModeSelection(stored.aqualAudioMode || "elevenlabs");
-    applyTheme(stored.aqualTheme || "dark");
+  chrome.storage.local.get({ aqualAudioMode: null }, (localStored) => {
+    chrome.storage.sync.get({ aqualAudioMode: "elevenlabs", aqualTheme: "dark" }, (syncStored) => {
+      const persistedMode = normalizeAudioMode(localStored.aqualAudioMode || syncStored.aqualAudioMode);
+      applyModeSelection(persistedMode);
+      applyTheme(syncStored.aqualTheme || "dark");
+    });
   });
 
   chrome.storage.local.get({ aqualAudioRecording: false, aqualAudioTranscript: "" }, (stored) => {

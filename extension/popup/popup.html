@@ -24,6 +24,18 @@
       </div>
 
       <div class="tab-panel active" id="tab-visual">
+        <div class="visual-search">
+          <input
+            type="search"
+            id="visualSearchInput"
+            class="search-input"
+            placeholder="Search visual features..."
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <div class="search-empty" id="visualSearchEmpty" hidden>No matching features.</div>
+        </div>
+
         <details class="group" id="section-reading" open>
           <summary>Reading &amp; Text</summary>
 
@@ -243,20 +255,6 @@
 
         <div class="control">
           <div class="control-info">
-            <div class="control-title">Adaptive contrast</div>
-            <div class="control-subtitle">Auto-adjust based on page colors.</div>
-          </div>
-          <div class="control-actions">
-            <label class="switch">
-              <input type="checkbox" id="adaptiveContrastEnabled" />
-              <span class="switch-track"></span>
-              <span class="switch-state" id="adaptiveContrastEnabledState">Off</span>
-            </label>
-          </div>
-        </div>
-
-        <div class="control">
-          <div class="control-info">
             <div class="control-title">Night / reading mode</div>
             <div class="control-subtitle">Low-vision friendly dark theme.</div>
           </div>
@@ -366,14 +364,6 @@
             </label>
           </div>
         </div>
-        </details>
-
-        <details class="group shortcuts" id="section-shortcuts">
-          <summary>Keyboard shortcuts</summary>
-        <div class="shortcut">Image veil: Alt + V</div>
-        <div class="shortcut">Highlight words: Alt + Shift + H</div>
-        <div class="shortcut">Magnifier: Alt + Shift + M</div>
-        <div class="shortcut">Emphasize links: Alt + Shift + E</div>
         </details>
 
         <details class="group" id="section-docs">

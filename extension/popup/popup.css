@@ -14,6 +14,15 @@
   --muted: #cbd5f5;
   --accent: #22d3ee;
   --border: #1f2937;
+  --border-strong: #334155;
+  --summary-text: #e2e8f0;
+  --switch-off-bg: #1f2937;
+  --switch-off-border: #334155;
+  --switch-thumb: #f8fafc;
+  --mode-eleven-active-text: #e0f2fe;
+  --mode-local-active-text: #dcfce7;
+  --audio-start-text: #ecfdf5;
+  --audio-stop-text: #fee2e2;
   --shadow: rgba(15, 23, 42, 0.5);
   --radius-lg: 18px;
   --radius-md: 14px;
@@ -29,11 +38,20 @@
   color-scheme: light;
   --bg: #f8fafc;
   --panel: #ffffff;
-  --panel-2: #f1f5f9;
+  --panel-2: #eef3f8;
   --text: #0f172a;
-  --muted: #475569;
+  --muted: #334155;
   --accent: #0284c7;
-  --border: #e2e8f0;
+  --border: #cbd5e1;
+  --border-strong: #94a3b8;
+  --summary-text: #0f172a;
+  --switch-off-bg: #dbe5ef;
+  --switch-off-border: #94a3b8;
+  --switch-thumb: #0f172a;
+  --mode-eleven-active-text: #0c4a6e;
+  --mode-local-active-text: #14532d;
+  --audio-start-text: #14532d;
+  --audio-stop-text: #7f1d1d;
   --shadow: rgba(15, 23, 42, 0.12);
   --scrollbar-track: #f1f5f9;
   --scrollbar-thumb: #cbd5f5;
@@ -86,6 +104,22 @@ body::-webkit-scrollbar {
   background: linear-gradient(180deg, #ffffff 0%, #f1f5f9 100%);
 }
 
+:root[data-theme="light"] .app-header,
+:root[data-theme="light"] .group,
+:root[data-theme="light"] .tab-button,
+:root[data-theme="light"] .select,
+:root[data-theme="light"] .action-button,
+:root[data-theme="light"] .reset-button,
+:root[data-theme="light"] .file-input,
+:root[data-theme="light"] .audio-card,
+:root[data-theme="light"] .mode-button,
+:root[data-theme="light"] .audio-visualizer,
+:root[data-theme="light"] .audio-transcript,
+:root[data-theme="light"] .theme-toggle,
+:root[data-theme="light"] .ghost-button {
+  border-color: var(--border-strong);
+}
+
 .tab-bar {
   display: flex;
   gap: 8px;
@@ -118,6 +152,31 @@ body::-webkit-scrollbar {
 
 .tab-panel.active {
   display: block;
+}
+
+.visual-search {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.search-input {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 14px;
+}
+
+.search-input::placeholder {
+  color: var(--muted);
+}
+
+.search-empty {
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .app-header {
@@ -180,7 +239,7 @@ body::-webkit-scrollbar {
   font-size: 15px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: #e2e8f0;
+  color: var(--summary-text);
   font-weight: 600;
   display: flex;
   align-items: center;
@@ -289,12 +348,12 @@ body::-webkit-scrollbar {
   appearance: none;
   width: 46px;
   height: 26px;
-  background: #1f2937;
+  background: var(--switch-off-bg);
   border-radius: 999px;
   position: relative;
   cursor: pointer;
   outline: none;
-  border: 1px solid #334155;
+  border: 1px solid var(--switch-off-border);
 }
 
 .switch input::after {
@@ -303,7 +362,7 @@ body::-webkit-scrollbar {
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  background: #f8fafc;
+  background: var(--switch-thumb);
   top: 2px;
   left: 2px;
   transition: transform 160ms ease;
@@ -359,16 +418,6 @@ body::-webkit-scrollbar {
   box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.2);
 }
 
-.shortcuts {
-  background: var(--panel-2);
-}
-
-.shortcut {
-  font-size: 13px;
-  color: var(--muted);
-  padding: 4px 0;
-}
-
 select:focus,
 input:focus {
   outline: 2px solid var(--accent);
@@ -389,6 +438,11 @@ input:focus {
 .action-button:hover,
 .reset-button:hover {
   border-color: var(--accent);
+}
+
+.reset-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .footer {
@@ -485,12 +539,12 @@ input:focus {
 
 .mode-button[data-mode="elevenlabs"].active {
   border-color: var(--info);
-  color: #e0f2fe;
+  color: var(--mode-eleven-active-text);
 }
 
 .mode-button[data-mode="local"].active {
   border-color: var(--success);
-  color: #dcfce7;
+  color: var(--mode-local-active-text);
 }
 
 .audio-permission {
@@ -532,7 +586,7 @@ input:focus {
 
 .audio-start {
   border-color: rgba(52, 211, 153, 0.6);
-  color: #ecfdf5;
+  color: var(--audio-start-text);
 }
 
 .audio-start:hover {
@@ -541,7 +595,7 @@ input:focus {
 
 .audio-stop {
   border-color: rgba(248, 113, 113, 0.6);
-  color: #fee2e2;
+  color: var(--audio-stop-text);
 }
 
 .audio-stop:hover {
