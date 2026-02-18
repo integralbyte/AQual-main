@@ -1136,8 +1136,414 @@ function applySettings(incoming) {
   state = next;
 }
 
-chrome.runtime.onMessage.addListener((message) => {
+function isGoogleSearchHost(hostname) {
+  const host = String(hostname || "").toLowerCase();
+  return host.includes("google.");
+}
+
+function parseHttpUrl(rawUrl) {
+  if (!rawUrl) return "";
+  try {
+    const absolute = new URL(String(rawUrl).trim(), window.location.href);
+    if (!/^https?:$/.test(absolute.protocol)) return "";
+    return absolute.href;
+  } catch (_error) {
+    return "";
+  }
+}
+
+function parseAbsoluteHttpUrl(rawUrl) {
+  const input = String(rawUrl || "").trim();
+  if (!/^https?:\/\//i.test(input)) return "";
+  try {
+    const absolute = new URL(input);
+    if (!/^https?:$/.test(absolute.protocol)) return "";
+    return absolute.href;
+  } catch (_error) {
+    return "";
+  }
+}
+
+function tryDecodeURIComponent(value) {
+  if (!value) return "";
+  try {
+    return decodeURIComponent(value);
+  } catch (_error) {
+    return value;
+  }
+}
+
+function extractExternalUrlFromGoogleHref(rawHref) {
+  let current = parseHttpUrl(rawHref);
+  if (!current) return "";
+
+  const visited = new Set();
+  for (let depth = 0; depth < 6; depth += 1) {
+    if (!current || visited.has(current)) {
+      break;
+    }
+    visited.add(current);
+
+    const absolute = parseHttpUrl(current);
+    if (!absolute) break;
+
+    let parsed;
+    try {
+      parsed = new URL(absolute);
+    } catch (_error) {
+      break;
+    }
+
+    if (!isGoogleSearchHost(parsed.hostname)) {
+      return parsed.href;
+    }
+
+    const redirectParams = [
+      "continue",
+      "url",
+      "q",
+      "imgrefurl",
+      "imgurl",
+      "adurl",
+      "u",
+      "dest",
+      "destination"
+    ];
+
+    let nextUrl = "";
+    for (let i = 0; i < redirectParams.length; i += 1) {
+      const value = parsed.searchParams.get(redirectParams[i]) || "";
+      if (!value) continue;
+      const decoded = tryDecodeURIComponent(value);
+      const resolved = parseAbsoluteHttpUrl(decoded) || parseAbsoluteHttpUrl(value);
+      if (resolved) {
+        nextUrl = resolved;
+        break;
+      }
+    }
+
+    if (!nextUrl) {
+      break;
+    }
+
+    current = nextUrl;
+  }
+
+  return "";
+}
+
+function addGoogleSearchCandidate(rawUrl, label, seen, candidates) {
+  const targetUrl = extractExternalUrlFromGoogleHref(rawUrl);
+  if (!targetUrl || seen.has(targetUrl)) return false;
+
+  let domain = "";
+  try {
+    domain = new URL(targetUrl).hostname.toLowerCase().replace(/^www\./, "");
+  } catch (_error) {
+    return false;
+  }
+  if (!domain) return false;
+
+  candidates.push({
+    url: targetUrl,
+    domain,
+    label: String(label || "").trim().toLowerCase()
+  });
+  seen.add(targetUrl);
+  return true;
+}
+
+function getAnchorRawHref(anchor) {
+  if (!anchor || !anchor.getAttribute) return "";
+  const attrHref = String(anchor.getAttribute("href") || "").trim();
+  if (attrHref) {
+    if (/^https?:\/\//i.test(attrHref)) {
+      return attrHref;
+    }
+    if (attrHref.startsWith("/")) {
+      return `${window.location.origin}${attrHref}`;
+    }
+  }
+  return String(anchor && anchor.href ? anchor.href : "");
+}
+
+function collectGoogleAnchorsFromResultCard(card) {
+  const ordered = [];
+  if (!card || !card.querySelectorAll) return ordered;
+
+  card.querySelectorAll("h3.LC20lb, h3").forEach((heading) => {
+    const anchor = heading.closest("a[href]");
+    if (anchor) ordered.push(anchor);
+  });
+
+  const primarySelectors = [
+    "a.zReHs[href]",
+    "a.rIRoqf[href]",
+    "a.B4Fhld[href]",
+    "a.nNd3yc[href]"
+  ];
+  primarySelectors.forEach((selector) => {
+    card.querySelectorAll(selector).forEach((anchor) => {
+      ordered.push(anchor);
+    });
+  });
+
+  card.querySelectorAll("a[href]").forEach((anchor) => {
+    ordered.push(anchor);
+  });
+
+  return ordered;
+}
+
+function collectGoogleSearchResultCandidates() {
+  const root = document.querySelector("#rso") || document.querySelector("#search") || document.body;
+  const seen = new Set();
+  const candidates = [];
+
+  // Hard priority for Google video-result anchors:
+  // <a class="zReHs" href="https://..."><h3 class="LC20lb">...</h3></a>
+  // If these exist, use only these so index mapping matches what users see.
+  const strictVideoAnchors = root.querySelectorAll("a.zReHs[href]");
+  if (strictVideoAnchors && strictVideoAnchors.length) {
+    strictVideoAnchors.forEach((anchor) => {
+      if (!anchor || anchor.closest("#top_nav, #hdtb, #appbar, #searchform, #foot")) return;
+      const heading = anchor.querySelector("h3.LC20lb, h3");
+      const label = (heading && heading.textContent ? heading.textContent : (anchor.getAttribute("aria-label") || anchor.textContent || "")).trim().toLowerCase();
+      const rawHref = getAnchorRawHref(anchor);
+      addGoogleSearchCandidate(rawHref, label, seen, candidates);
+    });
+    if (candidates.length) {
+      return candidates;
+    }
+  }
+
+  const resultCards = root.querySelectorAll(".MjjYud, .PmEWq, [data-cid], .g, .Gx5Zad");
+  resultCards.forEach((card) => {
+    if (!card || !card.querySelector) return;
+    if (card.closest("#top_nav, #hdtb, #appbar, #searchform, #foot")) return;
+
+    const heading = card.querySelector("h3.LC20lb, h3");
+    const headingLabel = (heading && heading.textContent ? heading.textContent : "").trim().toLowerCase();
+    let cardAdded = false;
+
+    const cardAnchors = collectGoogleAnchorsFromResultCard(card);
+    for (let i = 0; i < cardAnchors.length; i += 1) {
+      const anchor = cardAnchors[i];
+      if (!anchor || !anchor.href) continue;
+      const label = headingLabel || (anchor.getAttribute("aria-label") || anchor.textContent || "");
+      const rawHref = getAnchorRawHref(anchor);
+      const added = addGoogleSearchCandidate(rawHref, label, seen, candidates);
+      if (added) {
+        cardAdded = true;
+        break;
+      }
+    }
+
+    if (!cardAdded) {
+      const urlNode = card.querySelector("[data-surl], [data-curl]");
+      if (urlNode) {
+        const rawUrl = urlNode.getAttribute("data-surl") || urlNode.getAttribute("data-curl") || "";
+        addGoogleSearchCandidate(rawUrl, headingLabel, seen, candidates);
+      }
+    }
+  });
+
+  // Fallback for unexpected layouts.
+  const fallbackAnchors = [];
+  root.querySelectorAll("h3.LC20lb, h3").forEach((heading) => {
+    const anchor = heading.closest("a[href]");
+    if (anchor) {
+      fallbackAnchors.push(anchor);
+    }
+  });
+  root.querySelectorAll("a h3").forEach((heading) => {
+    const anchor = heading.closest("a[href]");
+    if (anchor) {
+      fallbackAnchors.push(anchor);
+    }
+  });
+  root.querySelectorAll("a[href]").forEach((anchor) => {
+    fallbackAnchors.push(anchor);
+  });
+
+  for (let i = 0; i < fallbackAnchors.length; i += 1) {
+    const anchor = fallbackAnchors[i];
+    if (!anchor || !anchor.href) continue;
+    if (anchor.closest("#top_nav, #hdtb, #appbar, #searchform, #foot")) continue;
+    const label = (anchor.getAttribute("aria-label") || anchor.textContent || "").trim().toLowerCase();
+    const rawHref = getAnchorRawHref(anchor);
+    addGoogleSearchCandidate(rawHref, label, seen, candidates);
+  }
+
+  return candidates;
+}
+
+function collapseSearchToken(value) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function getDomainStem(domain) {
+  const raw = String(domain || "").toLowerCase().replace(/^www\./, "");
+  return collapseSearchToken(raw.split(".")[0] || raw);
+}
+
+function levenshteinDistance(a, b) {
+  const left = String(a || "");
+  const right = String(b || "");
+  if (left === right) return 0;
+  if (!left) return right.length;
+  if (!right) return left.length;
+  const matrix = Array.from({ length: left.length + 1 }, () => []);
+  for (let i = 0; i <= left.length; i += 1) {
+    matrix[i][0] = i;
+  }
+  for (let j = 0; j <= right.length; j += 1) {
+    matrix[0][j] = j;
+  }
+  for (let i = 1; i <= left.length; i += 1) {
+    for (let j = 1; j <= right.length; j += 1) {
+      const cost = left[i - 1] === right[j - 1] ? 0 : 1;
+      matrix[i][j] = Math.min(
+        matrix[i - 1][j] + 1,
+        matrix[i][j - 1] + 1,
+        matrix[i - 1][j - 1] + cost
+      );
+    }
+  }
+  return matrix[left.length][right.length];
+}
+
+function similarityScore(a, b) {
+  const left = collapseSearchToken(a);
+  const right = collapseSearchToken(b);
+  if (!left || !right) return 0;
+  if (left === right) return 1;
+  if (left.includes(right) || right.includes(left)) {
+    const ratio = Math.min(left.length, right.length) / Math.max(left.length, right.length);
+    return 0.86 + (0.14 * ratio);
+  }
+  const distance = levenshteinDistance(left, right);
+  const base = 1 - (distance / Math.max(left.length, right.length));
+  return Math.max(0, base);
+}
+
+function resolveGoogleSearchResultFromPayload(payload) {
+  const candidates = collectGoogleSearchResultCandidates();
+  if (!candidates.length) {
+    return { ok: false, error: "No Google results found on page." };
+  }
+
+  const domainKeywordRaw = (payload && payload.domainKeyword ? String(payload.domainKeyword) : "").toLowerCase().trim();
+  if (domainKeywordRaw) {
+    const forceDomainMatch = Boolean(payload && payload.forceDomainMatch);
+    const collapsedKeyword = domainKeywordRaw.replace(/[^a-z0-9.-]/g, "");
+    const tokenKeywords = domainKeywordRaw
+      .split(/\s+/)
+      .map((token) => token.replace(/[^a-z0-9.-]/g, ""))
+      .filter((token) => token.length >= 2);
+
+    const match = candidates.find((candidate) => {
+      const domainCollapsed = candidate.domain.replace(/[^a-z0-9.-]/g, "");
+      const urlLower = candidate.url.toLowerCase();
+      const labelCollapsed = candidate.label.replace(/[^a-z0-9.-]/g, "");
+      if (collapsedKeyword && (domainCollapsed.includes(collapsedKeyword) || urlLower.includes(collapsedKeyword) || labelCollapsed.includes(collapsedKeyword))) {
+        return true;
+      }
+      if (!tokenKeywords.length) return false;
+      return tokenKeywords.every((token) => (
+        domainCollapsed.includes(token)
+        || urlLower.includes(token)
+        || labelCollapsed.includes(token)
+      ));
+    });
+
+    if (match) {
+      return { ok: true, url: match.url, domain: match.domain };
+    }
+
+    let best = null;
+    for (let i = 0; i < candidates.length; i += 1) {
+      const candidate = candidates[i];
+      const domainCollapsed = candidate.domain.replace(/[^a-z0-9.-]/g, "");
+      const domainStem = getDomainStem(candidate.domain);
+      const labelCollapsed = candidate.label.replace(/[^a-z0-9.-]/g, "");
+
+      let score = Math.max(
+        similarityScore(domainKeywordRaw, domainCollapsed),
+        similarityScore(domainKeywordRaw, domainStem),
+        similarityScore(domainKeywordRaw, labelCollapsed)
+      );
+
+      if (tokenKeywords.length) {
+        let tokenHits = 0;
+        for (let j = 0; j < tokenKeywords.length; j += 1) {
+          const token = tokenKeywords[j];
+          if (
+            domainCollapsed.includes(token)
+            || domainStem.includes(token)
+            || labelCollapsed.includes(token)
+            || candidate.url.toLowerCase().includes(token)
+          ) {
+            tokenHits += 1;
+          }
+        }
+        score = Math.max(score, tokenHits / tokenKeywords.length);
+      }
+
+      if (!best || score > best.score) {
+        best = {
+          candidate,
+          score
+        };
+      }
+    }
+
+    if (best && (forceDomainMatch || best.score >= 0.33)) {
+      return {
+        ok: true,
+        url: best.candidate.url,
+        domain: best.candidate.domain,
+        similarity: Number(best.score.toFixed(3))
+      };
+    }
+
+    return { ok: false, error: `No result matched "${domainKeywordRaw}".` };
+  }
+
+  let index = Number(payload && payload.index);
+  if (!Number.isFinite(index) || index <= 0) {
+    index = 1;
+  }
+  index = Math.floor(index);
+  if (index > candidates.length) {
+    index = candidates.length;
+  }
+
+  const chosen = candidates[index - 1];
+  if (!chosen) {
+    return { ok: false, error: "No matching result index." };
+  }
+  return {
+    ok: true,
+    url: chosen.url,
+    domain: chosen.domain,
+    index,
+    total: candidates.length
+  };
+}
+
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (!message) return;
+  if (message.type === "aqual-google-search-action") {
+    if (window.top !== window) {
+      return;
+    }
+    const payload = message.payload || {};
+    if (payload.action === "resolve-result") {
+      sendResponse(resolveGoogleSearchResultFromPayload(payload));
+      return true;
+    }
+  }
   if (message.type === "aqual-apply") {
     applySettings(message.settings || {});
   }
