@@ -23,7 +23,8 @@ const DEFAULTS = {
   blueLightLevel: 0.2,
   colorBlindMode: "none",
   reducedCrowdingEnabled: false,
-  drawingEnabled: false
+  drawingEnabled: false,
+  lineGuideEnabled: false
 };
 
 const COLOR_PALETTE = [
@@ -843,6 +844,13 @@ function bindEvents() {
     pushStateToActive();
   });
 
+  byId("lineGuideEnabled").addEventListener("change", (e) => {
+    state.lineGuideEnabled = e.target.checked;
+    setToggleText("lineGuideEnabledState", state.lineGuideEnabled);
+    persistSettings({ lineGuideEnabled: state.lineGuideEnabled });
+    pushStateToActive();
+  });
+
   byId("highContrastEnabled").addEventListener("change", (e) => {
     state.highContrastEnabled = e.target.checked;
     setToggleText("highContrastEnabledState", state.highContrastEnabled);
@@ -962,6 +970,7 @@ function hydrateUI(settings) {
   byId("cursorEnabled").checked = state.cursorEnabled;
   byId("reducedCrowdingEnabled").checked = state.reducedCrowdingEnabled;
   byId("drawingEnabled").checked = state.drawingEnabled;
+  byId("lineGuideEnabled").checked = state.lineGuideEnabled;
   byId("highContrastEnabled").checked = state.highContrastEnabled;
   byId("nightModeEnabled").checked = state.nightModeEnabled;
   byId("dimmingEnabled").checked = state.dimmingEnabled;
@@ -990,6 +999,7 @@ function hydrateUI(settings) {
   setToggleText("cursorEnabledState", state.cursorEnabled);
   setToggleText("reducedCrowdingEnabledState", state.reducedCrowdingEnabled);
   setToggleText("drawingEnabledState", state.drawingEnabled);
+  setToggleText("lineGuideEnabledState", state.lineGuideEnabled);
   setToggleText("highContrastEnabledState", state.highContrastEnabled);
   setToggleText("nightModeEnabledState", state.nightModeEnabled);
   setToggleText("dimmingEnabledState", state.dimmingEnabled);

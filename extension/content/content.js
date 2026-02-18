@@ -23,7 +23,8 @@ const DEFAULTS = {
   blueLightLevel: 0.2,
   colorBlindMode: "none",
   reducedCrowdingEnabled: false,
-  drawingEnabled: false
+  drawingEnabled: false,
+  lineGuideEnabled: false
 };
 
 const FONT_CSS_MAP = {
@@ -198,6 +199,12 @@ let chatInFlight = false;
 let chatHistory = [];
 let chatDrag = null;
 let previousUserSelect = "";
+let lineGuideOverlay = null;
+let lineGuideEnabled = false;
+let lineGuideY = 0;
+let lineGuideRaf = null;
+let selectionSpeechAudio = null;
+let selectionSpeechBusy = false;
 
 const HIGH_CONTRAST_CURSOR_MAP = {
   "arrow-large.png": "arrow-large-white.png",
@@ -240,6 +247,7 @@ function resetAllVisualEffects() {
   toggleNightMode(false);
   applyDimming(false, state.dimmingLevel);
   applyBlueLight(false, state.blueLightLevel);
+  setLineGuideEnabled(false);
 }
 
 function ensureStyleTag(id, cssText) {
@@ -1121,6 +1129,10 @@ function applySettings(incoming) {
     applyBlueLight(next.blueLightEnabled, next.blueLightLevel);
   }
 
+  if (next.lineGuideEnabled !== state.lineGuideEnabled) {
+    setLineGuideEnabled(next.lineGuideEnabled);
+  }
+
   state = next;
 }
 
@@ -1803,6 +1815,161 @@ function initializeImageAssist() {
 
 initializeImageAssist();
 
+function ensureLineGuideOverlay() {
+  if (lineGuideOverlay && lineGuideOverlay.isConnected) return lineGuideOverlay;
+  lineGuideOverlay = document.createElement("div");
+  lineGuideOverlay.className = "aqual-line-guide-overlay";
+  lineGuideOverlay.style.opacity = "0";
+  (document.body || document.documentElement).appendChild(lineGuideOverlay);
+  return lineGuideOverlay;
+}
+
+function requestLineGuidePaint() {
+  if (!lineGuideEnabled) return;
+  if (lineGuideRaf !== null) return;
+  lineGuideRaf = requestAnimationFrame(() => {
+    lineGuideRaf = null;
+    if (!lineGuideEnabled) return;
+    const overlay = ensureLineGuideOverlay();
+    const nextY = clampNumber(
+      Math.round(lineGuideY - (overlay.offsetHeight / 2)),
+      0,
+      Math.max(0, window.innerHeight - overlay.offsetHeight)
+    );
+    overlay.style.transform = `translateY(${nextY}px)`;
+    overlay.style.opacity = "1";
+  });
+}
+
+function setLineGuideEnabled(enabled) {
+  lineGuideEnabled = Boolean(enabled);
+  const overlay = ensureLineGuideOverlay();
+  if (!lineGuideEnabled) {
+    overlay.style.opacity = "0";
+    return;
+  }
+  lineGuideY = clampNumber(lineGuideY || (window.innerHeight * 0.35), 0, window.innerHeight);
+  requestLineGuidePaint();
+}
+
+function persistLineGuideSetting(enabled) {
+  try {
+    if (!chrome || !chrome.storage || !chrome.storage.sync || !chrome.storage.sync.set) return;
+    chrome.storage.sync.set({ lineGuideEnabled: Boolean(enabled) }, () => {
+      if (chrome.runtime && chrome.runtime.lastError) {
+        // Ignore storage sync failures; state already applied locally.
+      }
+    });
+  } catch (_error) {
+    // Ignore extension context errors.
+  }
+}
+
+function initializeLineGuide() {
+  document.addEventListener("mousemove", (event) => {
+    lineGuideY = event.clientY;
+    requestLineGuidePaint();
+  }, true);
+
+  window.addEventListener("resize", () => {
+    if (!lineGuideEnabled) return;
+    lineGuideY = clampNumber(lineGuideY || (window.innerHeight * 0.35), 0, window.innerHeight);
+    requestLineGuidePaint();
+  }, true);
+}
+
+initializeLineGuide();
+
+function stopSelectionSpeechPlayback() {
+  if (!selectionSpeechAudio) return;
+  const currentSrc = selectionSpeechAudio.src || "";
+  selectionSpeechAudio.pause();
+  selectionSpeechAudio.removeAttribute("src");
+  selectionSpeechAudio.load();
+  selectionSpeechAudio = null;
+  if (currentSrc.startsWith("blob:")) {
+    URL.revokeObjectURL(currentSrc);
+  }
+}
+
+function getSelectedTextForSpeech() {
+  const selection = window.getSelection();
+  const rawSelectionText = selection ? String(selection) : "";
+  const selectedText = rawSelectionText.trim();
+  if (selectedText) {
+    return selectedText.slice(0, 2500);
+  }
+
+  const active = document.activeElement;
+  if (!active) return "";
+  const tag = active.tagName ? active.tagName.toLowerCase() : "";
+  const supportsRange = tag === "input" || tag === "textarea";
+  if (supportsRange) {
+    const value = String(active.value || "");
+    const start = Number(active.selectionStart);
+    const end = Number(active.selectionEnd);
+    if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
+      return value.slice(start, end).trim().slice(0, 2500);
+    }
+  }
+  return "";
+}
+
+async function speakSelectedTextWithElevenLabs() {
+  if (selectionSpeechBusy) return;
+  const text = getSelectedTextForSpeech();
+  if (!text) return;
+
+  selectionSpeechBusy = true;
+  try {
+    stopSelectionSpeechPlayback();
+    const response = await fetch(`${DOC_SERVER_BASE}/speak-text`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text })
+    });
+
+    if (!response.ok) {
+      let errorMessage = `Speech request failed (${response.status})`;
+      try {
+        const errData = await response.json();
+        if (errData && errData.error) {
+          errorMessage = errData.error;
+        }
+      } catch (_error) {
+        // Ignore non-JSON error body.
+      }
+      throw new Error(errorMessage);
+    }
+
+    const audioBlob = await response.blob();
+    if (!audioBlob || !audioBlob.size) {
+      throw new Error("No audio returned");
+    }
+
+    const audioUrl = URL.createObjectURL(audioBlob);
+    const audio = new Audio(audioUrl);
+    selectionSpeechAudio = audio;
+    audio.onended = () => {
+      if (selectionSpeechAudio === audio) {
+        selectionSpeechAudio = null;
+      }
+      URL.revokeObjectURL(audioUrl);
+    };
+    audio.onerror = () => {
+      if (selectionSpeechAudio === audio) {
+        selectionSpeechAudio = null;
+      }
+      URL.revokeObjectURL(audioUrl);
+    };
+    await audio.play();
+  } catch (error) {
+    console.warn("AQual speech failed:", error);
+  } finally {
+    selectionSpeechBusy = false;
+  }
+}
+
 let audioHotkeyActive = false;
 const pressedKeys = new Set();
 let audioHoldPingTimer = null;
@@ -1847,10 +2014,28 @@ function stopAudioHoldPing() {
 document.addEventListener("keydown", (event) => {
   pressedKeys.add(event.code);
   const isAltDown = pressedKeys.has("AltLeft") || pressedKeys.has("AltRight") || event.altKey;
+  const isCDown = pressedKeys.has("KeyC") || event.code === "KeyC" || (event.key && event.key.toLowerCase() === "c");
+  const isGDown = pressedKeys.has("KeyG") || event.code === "KeyG" || (event.key && event.key.toLowerCase() === "g");
   const isADown = pressedKeys.has("KeyA") || event.code === "KeyA" || (event.key && event.key.toLowerCase() === "a");
+  if (event.ctrlKey || event.metaKey) return;
+
+  if (!event.repeat && isAltDown && isCDown) {
+    event.preventDefault();
+    speakSelectedTextWithElevenLabs();
+    return;
+  }
+
+  if (!event.repeat && isAltDown && isGDown) {
+    event.preventDefault();
+    const nextEnabled = !lineGuideEnabled;
+    setLineGuideEnabled(nextEnabled);
+    state = { ...state, lineGuideEnabled: nextEnabled };
+    persistLineGuideSetting(nextEnabled);
+    return;
+  }
+
   if (audioHotkeyActive || event.repeat) return;
   if (!(isAltDown && isADown)) return;
-  if (event.ctrlKey || event.metaKey) return;
   audioHotkeyActive = true;
   audioHoldSequence += 1;
   activeAudioHoldId = audioHoldSequence;
@@ -1878,6 +2063,10 @@ window.addEventListener("blur", () => {
     stopAudioHoldPing();
     safeRuntimeMessage({ type: "aqual-audio-hold", action: "stop", holdId: activeAudioHoldId });
     activeAudioHoldId = 0;
+  }
+  stopSelectionSpeechPlayback();
+  if (lineGuideOverlay) {
+    lineGuideOverlay.style.opacity = "0";
   }
   pressedKeys.clear();
 });

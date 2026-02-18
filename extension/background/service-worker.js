@@ -23,7 +23,8 @@ const DEFAULTS = {
   blueLightLevel: 0.2,
   colorBlindMode: "none",
   reducedCrowdingEnabled: false,
-  drawingEnabled: false
+  drawingEnabled: false,
+  lineGuideEnabled: false
 };
 
 function getSettings(callback) {
@@ -398,6 +399,10 @@ const VISUAL_COMMAND_KEYWORDS = [
   "crowding",
   "image veil",
   "highlight",
+  "beeline",
+  "line guide",
+  "line guidance",
+  "reading line",
   "drawing",
   "draw",
   "magnifier",
@@ -428,6 +433,7 @@ const FUZZY_FEATURE_DEFINITIONS = [
   { key: "reducedCrowdingEnabled", phrases: ["reduced text crowding", "text crowding", "word spacing", "letter spacing"] },
   { key: "imageVeilEnabled", phrases: ["image veil", "hide images", "replace images", "veil images"] },
   { key: "highlightEnabled", phrases: ["highlight words", "word highlight", "highlight text", "bionic reading"] },
+  { key: "lineGuideEnabled", phrases: ["beeline", "line guide", "line guidance", "reading line", "focus line", "tracking line"] },
   { key: "drawingEnabled", phrases: ["drawing mode", "draw on page", "annotation mode", "draw mode"] },
   { key: "magnifierEnabled", phrases: ["magnifier", "zoom lens", "image magnifier", "magnification"] },
   { key: "linkEmphasisEnabled", phrases: ["link emphasis", "emphasize links", "emphasise links", "underline links"] },
@@ -1143,6 +1149,10 @@ function mentionHighlightWords(text) {
   return includesAny(text, ["highlight words", "word highlight", "highlight text", "bionic"]);
 }
 
+function mentionLineGuide(text) {
+  return includesAny(text, ["beeline", "line guide", "line guidance", "reading line", "focus line", "tracking line"]);
+}
+
 function mentionDrawing(text) {
   return includesAny(text, ["draw on page", "drawing mode", "draw mode", "annotation mode", "drawings"]);
 }
@@ -1437,6 +1447,17 @@ function parseVisualVoiceCommand(normalizedText, settings) {
       return result;
     }
     if (setBooleanUpdate(result, settings, "highlightEnabled", switchIntent, false, DEFAULTS.highlightEnabled)) {
+      return result;
+    }
+  }
+
+  if (mentionLineGuide(normalizedText)) {
+    if (resetIntent) {
+      result.updates.lineGuideEnabled = DEFAULTS.lineGuideEnabled;
+      result.handled = true;
+      return result;
+    }
+    if (setBooleanUpdate(result, settings, "lineGuideEnabled", switchIntent, false, DEFAULTS.lineGuideEnabled)) {
       return result;
     }
   }
