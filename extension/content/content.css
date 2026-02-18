@@ -10,6 +10,13 @@
   display: none;
 }
 
+.aqual-image-shift-target {
+  outline: 3px solid #38bdf8 !important;
+  outline-offset: 3px !important;
+  box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.55) !important;
+  cursor: crosshair !important;
+}
+
 .aqual-word {
   border-radius: 3px;
   padding: 0.12em 0.22em;
@@ -81,11 +88,10 @@
 .aqual-blue-overlay {
   position: fixed;
   inset: 0;
-  background: #ffb26a;
+  background: #ffb347;
   opacity: 0;
   pointer-events: none;
   z-index: 2147483645;
-  mix-blend-mode: multiply;
   transition: opacity 160ms ease;
 }
 
@@ -108,7 +114,7 @@ html.aqual-night body * {
   border-color: #334155 !important;
 }
 
-html.aqual-night body *:not(img):not(video):not(canvas):not(svg):not(path):not(g):not(use) {
+html.aqual-night body *:not(img):not(video):not(canvas):not(svg):not(path):not(g):not(use):not(.aqual-dim-overlay):not(.aqual-blue-overlay):not(.aqual-draw-canvas):not(.aqual-magnifier-lens) {
   background-color: transparent !important;
 }
 
@@ -127,6 +133,6 @@ html.aqual-high-contrast body * {
   border-color: #ffffff !important;
 }
 
-html.aqual-high-contrast body *:not(img):not(video):not(canvas):not(svg):not(path):not(g):not(use) {
+html.aqual-high-contrast body *:not(img):not(video):not(canvas):not(svg):not(path):not(g):not(use):not(.aqual-dim-overlay):not(.aqual-blue-overlay):not(.aqual-draw-canvas):not(.aqual-magnifier-lens) {
   background-color: #000000 !important;
 }

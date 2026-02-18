@@ -16,7 +16,6 @@ const DEFAULTS = {
   cursorEnabled: false,
   cursorType: "arrow-large.png",
   highContrastEnabled: false,
-  adaptiveContrastEnabled: false,
   nightModeEnabled: false,
   dimmingEnabled: false,
   dimmingLevel: 0.25,
@@ -173,15 +172,74 @@ let magnifierListenersBound = false;
 let veilAttributeObserver = null;
 let dimOverlay = null;
 let blueOverlay = null;
-let adaptiveTimer = null;
 let drawingCanvas = null;
 let drawingCtx = null;
 let drawingStrokes = [];
 let activeStroke = null;
 let drawingResizeTimer = null;
+let cursorGuardTimer = null;
+let cursorGuardRaf = null;
+let cursorGuardUrl = "";
+let cursorProbeX = null;
+let cursorProbeY = null;
+let cursorGuardObserver = null;
+let shiftPressed = false;
+let shiftHoverImage = null;
+let describedImage = null;
+let describedImagePayload = null;
+let describedImageText = "";
+let describeRequestSerial = 0;
+let captionHost = null;
+let captionEls = null;
+let captionRepositionRaf = null;
+let chatHost = null;
+let chatEls = null;
+let chatInFlight = false;
+let chatHistory = [];
+let chatDrag = null;
+let previousUserSelect = "";
+
+const HIGH_CONTRAST_CURSOR_MAP = {
+  "arrow-large.png": "arrow-large-white.png",
+  "pencil-large.png": "pencil-large-white.png",
+  "black-large.cur": "arrow-large-white.png"
+};
+
+const GOOGLE_MAPS_BLOCKLIST = [
+  "https://www.google.com/maps",
+  "http://www.google.com/maps",
+  "https://maps.google.com",
+  "http://maps.google.com"
+];
+
+const DOC_SERVER_BASE = "http://localhost:8080";
+
+function isGoogleMapsUrl() {
+  const href = window.location.href;
+  return GOOGLE_MAPS_BLOCKLIST.some((prefix) => href.startsWith(prefix));
+}
 
 function normalizeSettings(input) {
   return { ...DEFAULTS, ...(input || {}) };
+}
+
+function resetAllVisualEffects() {
+  applyFontFamily(false, state.fontFamily);
+  applyFontSize(false, state.fontSizePx);
+  applyFontColor(false, state.fontColor);
+  applyTextStroke(false, state.textStrokeColor);
+  applyCursor(false, state.cursorType);
+  applyImageVeil(false);
+  toggleHighlight(false);
+  applyLinkEmphasis(false);
+  applyMagnifier(false, state.magnifierSize, state.magnifierZoom);
+  applyReducedCrowding(false);
+  applyDrawingMode(false);
+  updateRootFilter({ ...state, highContrastEnabled: false, colorBlindMode: "none" });
+  toggleHighContrast(false);
+  toggleNightMode(false);
+  applyDimming(false, state.dimmingLevel);
+  applyBlueLight(false, state.blueLightLevel);
 }
 
 function ensureStyleTag(id, cssText) {
@@ -262,15 +320,149 @@ function applyReducedCrowding(enabled) {
   ensureStyleTag(id, css);
 }
 
-function applyCursor(enabled, cursorType) {
+function stopCursorGuard() {
+  if (cursorGuardTimer) {
+    clearInterval(cursorGuardTimer);
+    cursorGuardTimer = null;
+  }
+  if (cursorGuardRaf !== null) {
+    cancelAnimationFrame(cursorGuardRaf);
+    cursorGuardRaf = null;
+  }
+  if (cursorGuardObserver) {
+    cursorGuardObserver.disconnect();
+    cursorGuardObserver = null;
+  }
+  document.removeEventListener("mousemove", handleCursorPointerMove, true);
+  document.removeEventListener("pointermove", handleCursorPointerMove, true);
+  document.removeEventListener("mouseover", requestCursorGuardCheck, true);
+  window.removeEventListener("scroll", requestCursorGuardCheck, true);
+  window.removeEventListener("focus", requestCursorGuardCheck, true);
+  document.removeEventListener("visibilitychange", requestCursorGuardCheck, true);
+  cursorProbeX = null;
+  cursorProbeY = null;
+}
+
+function handleCursorPointerMove(event) {
+  cursorProbeX = event.clientX;
+  cursorProbeY = event.clientY;
+  requestCursorGuardCheck();
+}
+
+function getCursorProbeElement() {
+  if (cursorProbeX === null || cursorProbeY === null) {
+    return document.documentElement;
+  }
+  return document.elementFromPoint(cursorProbeX, cursorProbeY) || document.documentElement;
+}
+
+function upsertCursorStyle(cursorUrl) {
+  const id = "aqual-cursor-style";
+  const css = `
+    *,
+    *::before,
+    *::after,
+    html,
+    body,
+    body *,
+    body *::before,
+    body *::after,
+    svg,
+    svg * {
+      cursor: url(${cursorUrl}) 4 4, auto !important;
+    }
+  `;
+  ensureStyleTag(id, css);
+}
+
+function elementHasCustomCursor(el) {
+  if (!el) return false;
+  const cursor = window.getComputedStyle(el).cursor || "";
+  return cursor.includes(cursorGuardUrl);
+}
+
+function ensureCursorApplied() {
+  if (!state.cursorEnabled || !cursorGuardUrl) return;
+  const probeEl = getCursorProbeElement();
+  const rootEl = document.documentElement;
+  const bodyEl = document.body;
+  const cursorStyleTag = document.getElementById("aqual-cursor-style");
+
+  if (
+    cursorStyleTag &&
+    elementHasCustomCursor(probeEl) &&
+    elementHasCustomCursor(rootEl) &&
+    (!bodyEl || elementHasCustomCursor(bodyEl))
+  ) {
+    return;
+  }
+
+  // Rewriting the style tag is cheap and reliably forces Chrome to pick
+  // the custom cursor again after OS/browser transient overrides.
+  upsertCursorStyle(cursorGuardUrl);
+}
+
+function handleCursorGuardMutation(mutations) {
+  for (let i = 0; i < mutations.length; i += 1) {
+    const mutation = mutations[i];
+    if (mutation.type === "attributes" || mutation.type === "childList") {
+      requestCursorGuardCheck();
+      return;
+    }
+  }
+}
+
+function startCursorGuard() {
+  if (cursorGuardTimer) return;
+  document.addEventListener("mousemove", handleCursorPointerMove, true);
+  document.addEventListener("pointermove", handleCursorPointerMove, true);
+  document.addEventListener("mouseover", requestCursorGuardCheck, true);
+  window.addEventListener("scroll", requestCursorGuardCheck, true);
+  window.addEventListener("focus", requestCursorGuardCheck, true);
+  document.addEventListener("visibilitychange", requestCursorGuardCheck, true);
+  cursorGuardObserver = new MutationObserver(handleCursorGuardMutation);
+  cursorGuardObserver.observe(document.documentElement, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    attributeFilter: ["style", "class"]
+  });
+  cursorGuardTimer = setInterval(() => {
+    ensureCursorApplied();
+  }, 250);
+}
+
+function requestCursorGuardCheck() {
+  if (cursorGuardRaf !== null) return;
+  cursorGuardRaf = requestAnimationFrame(() => {
+    cursorGuardRaf = null;
+    ensureCursorApplied();
+  });
+}
+
+function resolveCursorAsset(cursorType, highContrastEnabled) {
+  if (!highContrastEnabled) {
+    return cursorType;
+  }
+  return HIGH_CONTRAST_CURSOR_MAP[cursorType] || cursorType;
+}
+
+function applyCursor(enabled, cursorType, highContrastEnabled) {
   const id = "aqual-cursor-style";
   if (!enabled) {
+    stopCursorGuard();
+    cursorGuardUrl = "";
     removeElement(id);
     return;
   }
-  const cursorUrl = chrome.runtime.getURL(`assets/cursors/${cursorType}`);
-  const css = `* { cursor: url(${cursorUrl}) 4 4, auto !important; }`;
-  ensureStyleTag(id, css);
+  const resolvedCursorType = resolveCursorAsset(cursorType, highContrastEnabled);
+  const cursorUrl = chrome.runtime.getURL(`assets/cursors/${resolvedCursorType}`);
+  if (cursorUrl !== cursorGuardUrl) {
+    cursorGuardUrl = cursorUrl;
+  }
+  upsertCursorStyle(cursorGuardUrl);
+  startCursorGuard();
+  requestCursorGuardCheck();
 }
 
 function ensureOverlay(id, className) {
@@ -445,51 +637,10 @@ function ensureColorFilters() {
   (document.body || document.documentElement).appendChild(svg);
 }
 
-function parseRgbColor(value) {
-  if (!value) return null;
-  const match = value.match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)(?:,\\s*([\\d.]+))?\\)/i);
-  if (!match) return null;
-  const r = Number(match[1]);
-  const g = Number(match[2]);
-  const b = Number(match[3]);
-  const a = match[4] !== undefined ? Number(match[4]) : 1;
-  return { r, g, b, a };
-}
-
-function relativeLuminance({ r, g, b }) {
-  const transform = (channel) => {
-    const c = channel / 255;
-    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
-  };
-  const R = transform(r);
-  const G = transform(g);
-  const B = transform(b);
-  return 0.2126 * R + 0.7152 * G + 0.0722 * B;
-}
-
-function computeAdaptiveFilter() {
-  const bodyStyle = window.getComputedStyle(document.body || document.documentElement);
-  const rootStyle = window.getComputedStyle(document.documentElement);
-  const bodyBg = parseRgbColor(bodyStyle.backgroundColor);
-  const rootBg = parseRgbColor(rootStyle.backgroundColor);
-  const bg = (bodyBg && bodyBg.a > 0.05)
-    ? bodyBg
-    : (rootBg && rootBg.a > 0.05 ? rootBg : parseRgbColor("rgb(255,255,255)"));
-  const luminance = relativeLuminance(bg);
-  if (luminance < 0.4) {
-    return { brightness: 1.12, contrast: 1.2 };
-  }
-  return { brightness: 0.96, contrast: 1.25 };
-}
-
 function updateRootFilter(settings) {
   const parts = [];
   if (settings.highContrastEnabled) {
     parts.push("contrast(1.45) saturate(1.05)");
-  }
-  if (settings.adaptiveContrastEnabled) {
-    const { brightness, contrast } = computeAdaptiveFilter();
-    parts.push(`brightness(${brightness}) contrast(${contrast})`);
   }
   if (settings.colorBlindMode && settings.colorBlindMode !== "none") {
     ensureColorFilters();
@@ -502,15 +653,6 @@ function updateRootFilter(settings) {
   } else {
     document.documentElement.classList.remove("aqual-filter-root");
     document.documentElement.style.removeProperty("--aqual-filter");
-  }
-}
-
-function manageAdaptiveTimer(enabled) {
-  if (enabled && !adaptiveTimer) {
-    adaptiveTimer = setInterval(() => updateRootFilter(state), 2000);
-  } else if (!enabled && adaptiveTimer) {
-    clearInterval(adaptiveTimer);
-    adaptiveTimer = null;
   }
 }
 
@@ -890,6 +1032,12 @@ function applyMagnifier(enabled, size, zoom) {
 }
 
 function applySettings(incoming) {
+  if (isGoogleMapsUrl()) {
+    resetAllVisualEffects();
+    state = normalizeSettings(incoming);
+    return;
+  }
+
   const next = normalizeSettings(incoming);
 
   if (next.fontEnabled !== state.fontEnabled || next.fontFamily !== state.fontFamily) {
@@ -908,8 +1056,12 @@ function applySettings(incoming) {
     applyTextStroke(next.textStrokeEnabled, next.textStrokeColor);
   }
 
-  if (next.cursorEnabled !== state.cursorEnabled || next.cursorType !== state.cursorType) {
-    applyCursor(next.cursorEnabled, next.cursorType);
+  if (
+    next.cursorEnabled !== state.cursorEnabled ||
+    next.cursorType !== state.cursorType ||
+    (next.cursorEnabled && next.highContrastEnabled !== state.highContrastEnabled)
+  ) {
+    applyCursor(next.cursorEnabled, next.cursorType, next.highContrastEnabled);
   }
 
   if (next.imageVeilEnabled !== state.imageVeilEnabled) {
@@ -942,11 +1094,9 @@ function applySettings(incoming) {
 
   if (
     next.highContrastEnabled !== state.highContrastEnabled ||
-    next.adaptiveContrastEnabled !== state.adaptiveContrastEnabled ||
     next.colorBlindMode !== state.colorBlindMode
   ) {
     updateRootFilter(next);
-    manageAdaptiveTimer(next.adaptiveContrastEnabled);
   }
 
   if (next.highContrastEnabled !== state.highContrastEnabled) {
@@ -991,8 +1141,673 @@ chrome.storage.sync.get(DEFAULTS, (stored) => {
   applySettings(stored || {});
 });
 
+function clampNumber(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function isImageAssistEvent(event) {
+  if (!event || !event.composedPath) return false;
+  const path = event.composedPath();
+  return (captionHost && path.includes(captionHost)) || (chatHost && path.includes(chatHost));
+}
+
+function isDescribableImage(image) {
+  if (!image || !image.tagName || image.tagName.toLowerCase() !== "img") return false;
+  if (!image.isConnected) return false;
+  const src = image.dataset.aqualVeil === "1"
+    ? (image.dataset.aqualSrc || "")
+    : (image.currentSrc || image.src || "");
+  if (!src) return false;
+  const rect = image.getBoundingClientRect();
+  return rect.width >= 24 && rect.height >= 24;
+}
+
+function setShiftHoverImage(image) {
+  if (shiftHoverImage === image) return;
+  if (shiftHoverImage) {
+    shiftHoverImage.classList.remove("aqual-image-shift-target");
+  }
+  shiftHoverImage = image;
+  if (shiftHoverImage) {
+    shiftHoverImage.classList.add("aqual-image-shift-target");
+  }
+}
+
+function resolveImageSourceForAssist(image) {
+  const raw = image.dataset.aqualVeil === "1"
+    ? (image.dataset.aqualSrc || "")
+    : (image.currentSrc || image.src || "");
+  if (!raw) return "";
+  try {
+    return new URL(raw, window.location.href).href;
+  } catch (_error) {
+    return raw;
+  }
+}
+
+function collectImageContextText(image) {
+  const parts = [];
+  const alt = (image.alt || "").trim();
+  if (alt) parts.push(`Alt: ${alt}`);
+  const aria = (image.getAttribute("aria-label") || "").trim();
+  if (aria) parts.push(`ARIA: ${aria}`);
+  const title = (image.title || "").trim();
+  if (title) parts.push(`Title: ${title}`);
+
+  const figure = image.closest("figure");
+  if (figure) {
+    const figcaption = figure.querySelector("figcaption");
+    const captionText = (figcaption && figcaption.textContent ? figcaption.textContent : "").trim();
+    if (captionText) parts.push(`Figure caption: ${captionText}`);
+  }
+
+  const linked = image.closest("a, button");
+  if (linked) {
+    const controlText = (linked.getAttribute("aria-label") || linked.textContent || "").trim();
+    if (controlText) parts.push(`Control text: ${controlText}`);
+  }
+
+  return parts.join(" | ").slice(0, 700);
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Failed to read image blob"));
+    reader.onload = () => {
+      const result = String(reader.result || "");
+      const base64Part = result.includes(",") ? result.split(",", 2)[1] : "";
+      if (!base64Part) {
+        reject(new Error("Failed to encode image"));
+        return;
+      }
+      resolve(base64Part);
+    };
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function buildDescribedImagePayload(image) {
+  const imageUrl = resolveImageSourceForAssist(image);
+  if (!imageUrl) {
+    throw new Error("Unable to find image source");
+  }
+
+  const payload = {
+    altText: (image.alt || "").trim(),
+    titleText: (image.title || "").trim(),
+    contextText: collectImageContextText(image),
+    pageUrl: window.location.href,
+    pageTitle: document.title || ""
+  };
+
+  if (imageUrl.startsWith("blob:")) {
+    const response = await fetch(imageUrl);
+    if (!response.ok) {
+      throw new Error("Unable to read image blob");
+    }
+    const blob = await response.blob();
+    payload.imageData = await blobToBase64(blob);
+    payload.contentType = blob.type || "image/png";
+  } else {
+    payload.imageUrl = imageUrl;
+  }
+
+  return payload;
+}
+
+function ensureCaptionUi() {
+  if (captionHost && captionEls) return;
+
+  captionHost = document.createElement("div");
+  captionHost.id = "aqual-image-caption-host";
+  captionHost.style.position = "fixed";
+  captionHost.style.left = "12px";
+  captionHost.style.top = "12px";
+  captionHost.style.width = "320px";
+  captionHost.style.maxWidth = "min(92vw, 420px)";
+  captionHost.style.zIndex = "2147483647";
+  captionHost.style.display = "none";
+
+  const shadow = captionHost.attachShadow({ mode: "open" });
+  shadow.innerHTML = `
+    <style>
+      :host {
+        all: initial;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      }
+      .card {
+        background: rgba(9, 15, 27, 0.95);
+        color: #f8fafc;
+        border: 1px solid rgba(148, 163, 184, 0.35);
+        border-radius: 14px;
+        box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+        padding: 10px 12px;
+      }
+      .head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+      .title {
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+        color: #cbd5e1;
+      }
+      .close {
+        border: 0;
+        background: transparent;
+        color: #94a3b8;
+        cursor: pointer;
+        font-size: 18px;
+        line-height: 1;
+        padding: 0;
+      }
+      .close:hover {
+        color: #f8fafc;
+      }
+      .desc {
+        margin-top: 8px;
+        font-size: 13px;
+        line-height: 1.4;
+        color: #e2e8f0;
+        max-height: 170px;
+        overflow: auto;
+        white-space: pre-wrap;
+      }
+      .ask {
+        margin-top: 8px;
+        border: 0;
+        border-radius: 999px;
+        background: #1d4ed8;
+        color: #ffffff;
+        padding: 4px 9px;
+        font-size: 11px;
+        cursor: pointer;
+      }
+      .ask[disabled] {
+        opacity: 0.55;
+        cursor: not-allowed;
+      }
+    </style>
+    <div class="card" role="dialog" aria-live="polite" aria-label="Image description">
+      <div class="head">
+        <span class="title">Image Description</span>
+        <button id="closeBtn" class="close" type="button" aria-label="Close image description">&times;</button>
+      </div>
+      <div id="descText" class="desc"></div>
+      <button id="askBtn" class="ask" type="button" disabled>Ask follow-up</button>
+    </div>
+  `;
+
+  captionEls = {
+    closeBtn: shadow.getElementById("closeBtn"),
+    descText: shadow.getElementById("descText"),
+    askBtn: shadow.getElementById("askBtn")
+  };
+
+  captionEls.closeBtn.addEventListener("click", () => {
+    captionHost.style.display = "none";
+    closeChatUi(true);
+  });
+
+  captionEls.askBtn.addEventListener("click", () => {
+    openChatUi();
+  });
+
+  (document.body || document.documentElement).appendChild(captionHost);
+}
+
+function ensureChatUi() {
+  if (chatHost && chatEls) return;
+
+  chatHost = document.createElement("div");
+  chatHost.id = "aqual-image-chat-host";
+  chatHost.style.position = "fixed";
+  chatHost.style.right = "16px";
+  chatHost.style.bottom = "16px";
+  chatHost.style.width = "340px";
+  chatHost.style.height = "290px";
+  chatHost.style.minWidth = "260px";
+  chatHost.style.minHeight = "220px";
+  chatHost.style.maxWidth = "min(90vw, 680px)";
+  chatHost.style.maxHeight = "min(80vh, 760px)";
+  chatHost.style.resize = "both";
+  chatHost.style.overflow = "hidden";
+  chatHost.style.zIndex = "2147483647";
+  chatHost.style.display = "none";
+
+  const shadow = chatHost.attachShadow({ mode: "open" });
+  shadow.innerHTML = `
+    <style>
+      :host {
+        all: initial;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      }
+      .box {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        background: rgba(10, 14, 24, 0.97);
+        border: 1px solid rgba(148, 163, 184, 0.35);
+        border-radius: 16px;
+        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.38);
+        overflow: hidden;
+      }
+      .head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 10px 12px;
+        background: rgba(15, 23, 42, 0.95);
+        border-bottom: 1px solid rgba(148, 163, 184, 0.24);
+        cursor: move;
+        user-select: none;
+      }
+      .title {
+        color: #e2e8f0;
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+      }
+      .close {
+        border: 0;
+        background: transparent;
+        color: #94a3b8;
+        cursor: pointer;
+        font-size: 18px;
+        line-height: 1;
+        padding: 0;
+      }
+      .close:hover {
+        color: #f8fafc;
+      }
+      .messages {
+        flex: 1;
+        overflow: auto;
+        padding: 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .msg {
+        max-width: 88%;
+        padding: 8px 10px;
+        border-radius: 12px;
+        font-size: 12px;
+        line-height: 1.4;
+        white-space: pre-wrap;
+      }
+      .msg.user {
+        align-self: flex-end;
+        background: #2563eb;
+        color: #ffffff;
+      }
+      .msg.assistant {
+        align-self: flex-start;
+        background: #1f2937;
+        color: #e2e8f0;
+      }
+      .msg.pending {
+        opacity: 0.7;
+      }
+      .composer {
+        display: flex;
+        gap: 8px;
+        padding: 10px;
+        border-top: 1px solid rgba(148, 163, 184, 0.2);
+        background: rgba(2, 6, 23, 0.82);
+      }
+      textarea {
+        flex: 1;
+        resize: none;
+        border: 1px solid #334155;
+        border-radius: 10px;
+        padding: 8px;
+        font-size: 12px;
+        color: #e2e8f0;
+        background: #0f172a;
+        min-height: 36px;
+        max-height: 120px;
+      }
+      textarea:focus {
+        outline: 1px solid #3b82f6;
+      }
+      button.send {
+        border: 0;
+        border-radius: 10px;
+        background: #1d4ed8;
+        color: #ffffff;
+        font-size: 12px;
+        padding: 0 12px;
+        cursor: pointer;
+      }
+      button.send:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+    </style>
+    <div class="box" role="dialog" aria-label="Image follow-up chat">
+      <div id="dragHandle" class="head">
+        <span class="title">Image Follow-up</span>
+        <button id="closeBtn" class="close" type="button" aria-label="Close image follow-up">&times;</button>
+      </div>
+      <div id="messages" class="messages"></div>
+      <form id="chatForm" class="composer">
+        <textarea id="chatInput" placeholder="Ask about this image..." aria-label="Ask about this image"></textarea>
+        <button id="sendBtn" class="send" type="submit">Send</button>
+      </form>
+    </div>
+  `;
+
+  chatEls = {
+    closeBtn: shadow.getElementById("closeBtn"),
+    dragHandle: shadow.getElementById("dragHandle"),
+    messages: shadow.getElementById("messages"),
+    chatForm: shadow.getElementById("chatForm"),
+    chatInput: shadow.getElementById("chatInput"),
+    sendBtn: shadow.getElementById("sendBtn")
+  };
+
+  chatEls.closeBtn.addEventListener("click", () => closeChatUi(false));
+  chatEls.chatForm.addEventListener("submit", submitChatFollowUp);
+  chatEls.chatInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      chatEls.chatForm.requestSubmit();
+    }
+  });
+
+  chatEls.dragHandle.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    if (event.target && event.target.closest && event.target.closest("button")) return;
+
+    const rect = chatHost.getBoundingClientRect();
+    chatHost.style.left = `${Math.round(rect.left)}px`;
+    chatHost.style.top = `${Math.round(rect.top)}px`;
+    chatHost.style.right = "auto";
+    chatHost.style.bottom = "auto";
+
+    chatDrag = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      left: rect.left,
+      top: rect.top
+    };
+    previousUserSelect = document.documentElement.style.userSelect;
+    document.documentElement.style.userSelect = "none";
+    chatEls.dragHandle.setPointerCapture(event.pointerId);
+  });
+
+  chatEls.dragHandle.addEventListener("pointermove", (event) => {
+    if (!chatDrag || event.pointerId !== chatDrag.pointerId) return;
+    event.preventDefault();
+    const width = chatHost.offsetWidth;
+    const height = chatHost.offsetHeight;
+    const nextLeft = chatDrag.left + (event.clientX - chatDrag.startX);
+    const nextTop = chatDrag.top + (event.clientY - chatDrag.startY);
+    const maxLeft = Math.max(8, window.innerWidth - width - 8);
+    const maxTop = Math.max(8, window.innerHeight - height - 8);
+    chatHost.style.left = `${Math.round(clampNumber(nextLeft, 8, maxLeft))}px`;
+    chatHost.style.top = `${Math.round(clampNumber(nextTop, 8, maxTop))}px`;
+  });
+
+  const stopDrag = (event) => {
+    if (!chatDrag || event.pointerId !== chatDrag.pointerId) return;
+    chatEls.dragHandle.releasePointerCapture(event.pointerId);
+    chatDrag = null;
+    document.documentElement.style.userSelect = previousUserSelect || "";
+    previousUserSelect = "";
+  };
+  chatEls.dragHandle.addEventListener("pointerup", stopDrag);
+  chatEls.dragHandle.addEventListener("pointercancel", stopDrag);
+
+  (document.body || document.documentElement).appendChild(chatHost);
+}
+
+function closeChatUi(resetHistory) {
+  if (chatHost) {
+    chatHost.style.display = "none";
+  }
+  chatInFlight = false;
+  if (chatEls) {
+    chatEls.sendBtn.disabled = false;
+  }
+  if (resetHistory) {
+    chatHistory = [];
+    if (chatEls) {
+      chatEls.messages.innerHTML = "";
+      chatEls.chatInput.value = "";
+    }
+  }
+}
+
+function appendChatMessage(role, text, pending) {
+  if (!chatEls) return null;
+  const message = document.createElement("div");
+  message.className = `msg ${role}${pending ? " pending" : ""}`;
+  message.textContent = text;
+  chatEls.messages.appendChild(message);
+  chatEls.messages.scrollTop = chatEls.messages.scrollHeight;
+  return message;
+}
+
+async function fetchJson(url, payload) {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+
+  let data = {};
+  try {
+    data = await response.json();
+  } catch (_error) {
+    data = {};
+  }
+
+  if (!response.ok || (data && data.error)) {
+    throw new Error((data && data.error) || `Request failed (${response.status})`);
+  }
+  return data;
+}
+
+function requestCaptionReposition() {
+  if (captionRepositionRaf !== null) return;
+  captionRepositionRaf = requestAnimationFrame(() => {
+    captionRepositionRaf = null;
+    if (!captionHost || captionHost.style.display === "none") return;
+    if (!describedImage || !describedImage.isConnected) {
+      captionHost.style.display = "none";
+      closeChatUi(true);
+      return;
+    }
+
+    const rect = describedImage.getBoundingClientRect();
+    const width = clampNumber(Math.round(rect.width), 260, 420);
+    captionHost.style.width = `${width}px`;
+    const cardRect = captionHost.getBoundingClientRect();
+
+    let left = clampNumber(rect.left, 8, Math.max(8, window.innerWidth - cardRect.width - 8));
+    let top = rect.bottom + 10;
+    if (top + cardRect.height > window.innerHeight - 8) {
+      top = rect.top - cardRect.height - 10;
+    }
+    top = clampNumber(top, 8, Math.max(8, window.innerHeight - cardRect.height - 8));
+
+    captionHost.style.left = `${Math.round(left)}px`;
+    captionHost.style.top = `${Math.round(top)}px`;
+  });
+}
+
+function showCaptionLoading() {
+  ensureCaptionUi();
+  captionEls.descText.textContent = "Describing image...";
+  captionEls.askBtn.disabled = true;
+  captionHost.style.display = "block";
+  requestCaptionReposition();
+}
+
+function showCaptionError(message) {
+  ensureCaptionUi();
+  captionEls.descText.textContent = message;
+  captionEls.askBtn.disabled = true;
+  captionHost.style.display = "block";
+  requestCaptionReposition();
+}
+
+function showCaptionDescription(description) {
+  ensureCaptionUi();
+  captionEls.descText.textContent = description;
+  captionEls.askBtn.disabled = false;
+  captionHost.style.display = "block";
+  requestCaptionReposition();
+}
+
+function openChatUi() {
+  if (!describedImagePayload || !describedImageText) return;
+  ensureChatUi();
+  chatHost.style.display = "block";
+  if (!chatHistory.length && chatEls.messages.children.length === 0) {
+    appendChatMessage("assistant", "Ask anything specific about this image.", false);
+  }
+  chatEls.chatInput.focus();
+}
+
+async function describeImageFromPage(image) {
+  describedImage = image;
+  describedImagePayload = null;
+  describedImageText = "";
+  chatHistory = [];
+  closeChatUi(true);
+  showCaptionLoading();
+
+  const requestId = ++describeRequestSerial;
+  try {
+    const payload = await buildDescribedImagePayload(image);
+    const data = await fetchJson(`${DOC_SERVER_BASE}/describe-web-image`, payload);
+    if (requestId !== describeRequestSerial) return;
+
+    describedImagePayload = payload;
+    describedImageText = (data.description || "").trim();
+    if (!describedImageText) {
+      throw new Error("No description returned");
+    }
+    showCaptionDescription(describedImageText);
+  } catch (error) {
+    if (requestId !== describeRequestSerial) return;
+    showCaptionError(`Couldn't describe this image: ${error.message}`);
+  }
+}
+
+async function askFollowUpAboutImage(question, history) {
+  if (!describedImagePayload) {
+    throw new Error("No active image context");
+  }
+  const payload = {
+    ...describedImagePayload,
+    question,
+    description: describedImageText,
+    history
+  };
+  const data = await fetchJson(`${DOC_SERVER_BASE}/ask-web-image`, payload);
+  const answer = (data.answer || "").trim();
+  if (!answer) {
+    throw new Error("No answer returned");
+  }
+  return answer;
+}
+
+async function submitChatFollowUp(event) {
+  event.preventDefault();
+  if (!chatEls || chatInFlight) return;
+
+  const question = (chatEls.chatInput.value || "").trim();
+  if (!question) return;
+
+  chatEls.chatInput.value = "";
+  appendChatMessage("user", question, false);
+  const pending = appendChatMessage("assistant", "Thinking...", true);
+  chatInFlight = true;
+  chatEls.sendBtn.disabled = true;
+
+  const historyForRequest = [...chatHistory, { role: "user", content: question }];
+  try {
+    const answer = await askFollowUpAboutImage(question, historyForRequest);
+    if (pending) {
+      pending.textContent = answer;
+      pending.classList.remove("pending");
+    }
+    chatHistory = [...historyForRequest, { role: "assistant", content: answer }];
+  } catch (error) {
+    if (pending) {
+      pending.textContent = `Sorry, I couldn't answer that: ${error.message}`;
+      pending.classList.remove("pending");
+    }
+  } finally {
+    chatInFlight = false;
+    chatEls.sendBtn.disabled = false;
+    chatEls.messages.scrollTop = chatEls.messages.scrollHeight;
+  }
+}
+
+function handleShiftImageHover(event) {
+  if (!shiftPressed || isImageAssistEvent(event)) {
+    setShiftHoverImage(null);
+    return;
+  }
+  const target = event.target;
+  const image = target && target.closest ? target.closest("img") : null;
+  setShiftHoverImage(isDescribableImage(image) ? image : null);
+}
+
+function handleShiftImageClick(event) {
+  if (event.button !== 0 || !event.shiftKey || isImageAssistEvent(event)) return;
+  const target = event.target;
+  const image = target && target.closest ? target.closest("img") : null;
+  if (!isDescribableImage(image)) return;
+
+  event.preventDefault();
+  event.stopPropagation();
+  setShiftHoverImage(null);
+  describeImageFromPage(image);
+}
+
+function initializeImageAssist() {
+  window.addEventListener("scroll", requestCaptionReposition, true);
+  window.addEventListener("resize", requestCaptionReposition, true);
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Shift") {
+      shiftPressed = true;
+    }
+  }, true);
+
+  document.addEventListener("keyup", (event) => {
+    if (event.key === "Shift") {
+      shiftPressed = false;
+      setShiftHoverImage(null);
+    }
+  }, true);
+
+  document.addEventListener("mousemove", handleShiftImageHover, true);
+  document.addEventListener("click", handleShiftImageClick, true);
+}
+
+initializeImageAssist();
+
 let audioHotkeyActive = false;
 const pressedKeys = new Set();
+let audioHoldPingTimer = null;
+let audioHoldSequence = 0;
+let activeAudioHoldId = 0;
 
 function isEditableTarget(target) {
   if (!target) return false;
@@ -1015,6 +1830,20 @@ function safeRuntimeMessage(payload) {
   }
 }
 
+function startAudioHoldPing() {
+  if (audioHoldPingTimer) return;
+  audioHoldPingTimer = setInterval(() => {
+    if (!audioHotkeyActive || !activeAudioHoldId) return;
+    safeRuntimeMessage({ type: "aqual-audio-hold", action: "start", holdId: activeAudioHoldId });
+  }, 350);
+}
+
+function stopAudioHoldPing() {
+  if (!audioHoldPingTimer) return;
+  clearInterval(audioHoldPingTimer);
+  audioHoldPingTimer = null;
+}
+
 document.addEventListener("keydown", (event) => {
   pressedKeys.add(event.code);
   const isAltDown = pressedKeys.has("AltLeft") || pressedKeys.has("AltRight") || event.altKey;
@@ -1023,8 +1852,11 @@ document.addEventListener("keydown", (event) => {
   if (!(isAltDown && isADown)) return;
   if (event.ctrlKey || event.metaKey) return;
   audioHotkeyActive = true;
+  audioHoldSequence += 1;
+  activeAudioHoldId = audioHoldSequence;
   event.preventDefault();
-  safeRuntimeMessage({ type: "aqual-audio-hold", action: "start" });
+  safeRuntimeMessage({ type: "aqual-audio-hold", action: "start", holdId: activeAudioHoldId });
+  startAudioHoldPing();
 }, true);
 
 document.addEventListener("keyup", (event) => {
@@ -1034,14 +1866,18 @@ document.addEventListener("keyup", (event) => {
   const isADown = pressedKeys.has("KeyA");
   if (!(isAltDown && isADown)) {
     audioHotkeyActive = false;
-    safeRuntimeMessage({ type: "aqual-audio-hold", action: "stop" });
+    stopAudioHoldPing();
+    safeRuntimeMessage({ type: "aqual-audio-hold", action: "stop", holdId: activeAudioHoldId });
+    activeAudioHoldId = 0;
   }
 }, true);
 
 window.addEventListener("blur", () => {
   if (audioHotkeyActive) {
     audioHotkeyActive = false;
-    safeRuntimeMessage({ type: "aqual-audio-hold", action: "stop" });
+    stopAudioHoldPing();
+    safeRuntimeMessage({ type: "aqual-audio-hold", action: "stop", holdId: activeAudioHoldId });
+    activeAudioHoldId = 0;
   }
   pressedKeys.clear();
 });
