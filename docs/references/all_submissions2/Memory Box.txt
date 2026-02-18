@@ -1,0 +1,88 @@
+Inspiration
+
+"Memories shape our relationships , our experiences and our sense of self."
+
+In a world occupied by technology every solution for problems owes its root to the tech.
+Needless to say, every milestone we achieved so far is backed up by a technology
+We believe that it is our responsibility to make lives swift for those people who deserve a chance .That’s why we came up with a solution that could lift the spirits of people struggling with long-term memory disorders. Alzheimer’s and other forms of dementia are presenting the human race with one of its toughest challenges. It is currently the seventh leading cause of death among all diseases and one of the major causes of disability and dependency among older people globally. Patients with this disease need a caregiver , who is often a family member , to manage their daily tasks. This takes a great toll on both the caregiver , who is higher risk for depression, high stress levels. To alleviate these kinds of problem we wanted to create an much easier way for patients and also caregivers.
+
+"What can we do for the alzheimer affected people and make sure they can also access
+everything the world has to offer ?"
+"Is it possible to bridge their memories?"
+
+What it does
+
+Memory Box is a mobile based application backed by a web-application that ensures compatibility and stability in its own accord.Our accessible and inclusive application helps to address the disabilities that people with alzheimer's face on a daily basis, developed with various user- friendly features for both caregivers and patients.The database provided in this solution enables cross platform access with up-to-date execution of every functionality. Rather than being a solution for a particular problem, our application ensures multiple solutions for other related problems. It makes it possible for people with Alzheimer's disease to retain a sense of identity during the process of the disease poses a great challenge to care-givers, professionals and family caregivers.
+
+MOBILE APPLICATION
+
+-The mobile application is an one-in-all app for people with alzheimers.It acts as their personal checklist/reminder,navigating them smoothly through all of their daily routines, incorporating easily accessible features as a whole.It is capable of recording day-today tasks either recorded by the user or caregiver and look out whether the given tasks are executed chronologically.
+
+The easy-to-use dasboard enables the user to
+access all the features easily, with no pre-requisite skills needed
+
+The notes entered to save a task can be in the form of textual, voice and video.
+
+It also enables the user can to alert a caregiver or a family member if they wander off, or
+become disorientated or get lost.
+
+A medicine remainder feature makes user to take right medicine at right time in the right dosage.
+
+Tasks defined in the application can either be sorted daily, weekly, monthly and yearly.
+
+Gamified memory training in the form of quiz ensures active participation of the user.
+
+The application is capable of saving contacts along with their picture and mobile numbers which allows user to specify important contacts that can be triggered during emergency.
+
+WEB APPLICATION
+
+The web application can be either accessed by a caregiver or hospital management to keep a track of the patient or their loved ones.
+
+This facilitates a closer connection to the patient while ensuring the privacy of the individual.
+
+The web-application monitors the patient activity, details, records, prescription and many other valuable data.
+
+Thus, Memory box helps the alzheimer's sufferers to hold on to their memories and themselves,and gives them a new hope and strength creating an inclusive and accessible environment for them.To let them know that Alzheimer’s doesn't define their life anymore and they are not alone in this battle.
+Cause memories are worth fighting for !
+
+How we built it
+
+Flutter - For the mobile application
+
+Flask - For the web backend
+
+Firebase - For the database
+
+HTML&CSS - For the frontend
+
+Challenges we ran into
+
+Accurate details of the problems faced by Alzheimer's patients were analyzed to provide an effective solution.
+
+Accomplishments that we're proud of
+
+Being able to give an effective solution for people with Alzheimer's disease.
+
+The interface is also clean, intuitive, and functional.
+
+Even though we had a few difficulties ,we're definitely proud that we didn't leave this journey in between and we took all the difficulties as challenges.
+
+What we learned
+
+We learned a lot about time management and new ways to organize and plan our ideas and also how to divide our time between specific tasks and work more efficiently! We learnt the importance of teamwork , collaboration , and communication. That's how we're here as AGADA.
+
+What's next for Memory Box
+
+We aim to reinforce our project with more potential features.
+
+Adding Voice notification System for the patients.
+
+Enhancing cognitive skills through interactive gamified features.
+
+Early detection system to diagnose the disease.
+
+Providing safe and comfortable channels for patients to communicate with others on social media
+
+Animation based guides for the patients.
+
+More interactive tasks to battle the disease for the patients.

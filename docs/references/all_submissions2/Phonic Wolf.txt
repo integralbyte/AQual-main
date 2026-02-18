@@ -1,0 +1,27 @@
+Inspiration
+
+Visually impaired and other individuals with activity limitations may find it inconvenient to browse the internet in a traditional manner so I wanted to create a voice-controlled encyclopedia. Knowledge is meant to be shared and so a chatbot with both voice and text would be more inclusive.
+
+What it does
+
+It is a voice-enabled chatbot that answers questions with a response from the Wolfram API based on a user's query. If that fails it defaults to Wikipedia. Questions are not just limited to general knowledge they can also be scientific
+
+How we built it
+
+It was built using python, flask and the libraries for Wikipedia and Wolfram Alpha. Speech recognition is handled in the browser using google's web speech API.
+
+Challenges we ran into
+
+Had trouble getting voice to work in flask, ended up using Javascript on the frontend.
+
+Accomplishments that we're proud of
+
+Building a responsive bot.
+
+What we learned
+
+How to build voice-driven web applications
+
+What's next for Phonic Wolf
+
+Add more features starting with AI natural language understanding to make the conversations more seamless.

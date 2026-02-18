@@ -1,0 +1,17 @@
+THE ISSUE
+
+In 2015, there were an estimated 253 million visually impaired people worldwide. 36 million of these people were blind, and 217 million had moderate to severe visual impairment (MSVI), according to analysis from the Vision Loss Expert Group.
+
+As the world's population continues to grow and age, the total number of visually impaired people is expected to rise.
+
+Can technology help increase the independence, safety and quality-of-life of these individuals?
+
+INTRODUCING: ClarifEYE
+
+ClarifEYE is a mobile app designed to help people with blindness and MSVI safely navigate the world. Combining the power of computer vision with recent advances in machine learning, ClarifEYE “sees” and analyzes the world in real time, communicating rich audio information and voice navigation to users.
+
+ClarifEYE supplements the computer vision with additional inputs, including LIDAR technology and user-generated content (UGC) about local surroundings, verified by remote human workers. The UGC feeds an ever-expanding database that trains ClarifEYE’s AI, creating an increasingly intelligent neural network that performs tasks across a range of modalities.
+
+CONCLUSION
+
+ClarifEYE’s mission is to empower visually impaired people to interact with the world in new, meaningful ways.

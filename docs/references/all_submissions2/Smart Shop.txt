@@ -1,0 +1,23 @@
+Inspiration
+
+Our project is inspired by the kickoff meeting during which Christina mentions making shopping more accessible for the visually impaired. The pandemic has changed consumer behavior forever and studies show that online shopping looks set to stay. The sales from online shopping have more than doubled since 2018. This leads us to the question - how would the visually impaired deal with the situation? Although there are a lot of text-to-speech technologies online for the blind and visually impaired, they are not enough to have a good user experience. To tackle this issue we built an image-to-speech chrome extension that helps them have a more detailed and holistic experience.
+
+Now let me introduce you to Abbey Martin. She is a young working woman in the city of New York but the challenge that she faces is that she is blind. She has a service dog to help her walk and roam about in a city but when it comes to doing activities such as working on tasks, using social media, shopping, etc, she has to use assistive tools, for example, screen readers and braille, to help her understand what she is doing and hear what is around her.
+
+What it does
+
+We designed a chrome extension which is a natural image-to-speech reader. Our solution will read the features of the image (converting images to text). Let’s say that Abbey is online shopping and checks out the store H&M and she wants to either learn more about the items that are displayed or click on a certain button on the website, using the extension, she hovers over the favorite button and the shopping bag, the extension will convert the relative URL of the button which is then passed as a text to the text-to-speech API and the audio is played to her.
+
+We first detect the images on the website using jQuery and then send them to the Computer Vision API to identify the features in the image. The API returns these features in a JSON file which is sent to the Bing Text to Speech API. This returns an audio file that will be played to the user.
+
+How we built it
+
+Our Chrome extension uses the Microsoft Azure Computer Vision API and Bing Text To Speech API to read the elements of an image to users. Our target users are blind and/or visually impaired people. This will help them have a better experience of online shopping giving them more independence.
+
+Accomplishments that we're proud of
+
+Our team had only two hackers out of which one is a first-timer so we are proud that we were both able to contribute to the project and learn new skills along the way. We are also proud that we challenged ourselves to think outside the box and go beyond the usual text-to-speech methods
+
+What's next for Smart Shop
+
+Different from popular work on image captioning, it is hard to identify and describe the rich attributes of fashion items. For this, we plan on creating a model that uses a CNN, which is pre-trained on ImageNet, to obtain images features. We will then feed these features into an LSTM network to generate a description of the image in the English language

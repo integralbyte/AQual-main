@@ -1,0 +1,65 @@
+Inspiration
+
+We witness the various difficulties the physically disabled community face on a daily basis and wanted to help them tackle those challenges.
+
+WHO says, 61% of government websites are not accessible to physically challenged users.
+
+We discovered the existing Mobile banking applications are failing to provide equal accessibility to the differently-abled.
+
+Features
+
+Dedicated digital wallet platform and online mobility payment portal
+
+Involves disability-specific application customization
+
+Includes biometric authentication - Face ID & Touch ID
+
+Business and social impact
+
+Source: Business Disability Forum
+
+212 Billion dollars is the annual spending power of the disabled community of the United Kingdom
+
+75% of the community walk away from making a purchase because they are unable to do so
+
+Making banking accessible to the community sounds like a commercial and moral decision.
+
+Learning
+
+Sound Mixing
+
+UI Designing
+
+Animations
+
+Flutter
+
+Firebase
+
+Dart
+
+Adobe Creative Suite
+
+Challenges
+
+Choosing the best user experience for specific disabilities
+
+Gathering relevant stats for internal research
+
+What's next
+
+Integration with wearable devices and smart speakers.
+
+Integrations with Government Databases
+
+Insights
+
+App Experience
+
+Ease of Access
+
+Secure Payments
+
+Screenshots
+
+Welcome Screen

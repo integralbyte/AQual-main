@@ -1,0 +1,33 @@
+Inspiration
+
+The competition when you apply for a job has dramatically increased. A typical online job ad receives about 250 resumes, but magnet companies like Apple, Google, Amazon, Facebook can get over 1,000 applications per opening. Having a disability can be a disadvantage when looking for jobs despite it's illegal to discriminate against someone whose disability would not interfere with performing the duties required of the job.
+
+Companies including JP Morgan Chase, Coca-Cola, UPS, EY, IBM, Walgreens, Starbucks, and SAP are case studies that show people with disabilities can succeed. Accenture completed a major study that shows that such companies have seen “28 percent higher revenue, double the net income, and 30 percent higher economic profit margins” over a four-year period.
+
+That’s because people with disabilities bring unique characteristics and talents to the workplace that benefit employers and organizations. If we find the right jobs for the right people, it can and will increase the bottom line of companies.
+
+Given the unprecedented situation created by the COVID-19 pandemic and economic crisis, new ideas, new efforts and new leadership are needed to remake the economy and make it more inclusive for all.
+
+What it does
+
+We want to provide new skills for people with disabilities to be able to compete in top job positions.
+
+How we built it
+
+WordPress with learnpress plugin.
+
+Challenges we ran into
+
+We try to keep costs at a minimum.
+
+Accomplishments that we're proud of
+
+Having a working demo.
+
+What we learned
+
+We love doing this project during the whole process we learnt a lot.
+
+What's next for Disability Job & Learning Portal
+
+Sponsors and getting more courses and jumping into live mode

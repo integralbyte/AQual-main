@@ -1,0 +1,73 @@
+Inspiration
+
+"Not everyone can become a great artist, but a great artist can come from anywhere." – Anton Ego, Ratatouille.
+
+We often appreciate success that comes from humble origins that are filled with struggles. But rarely do we provide a helping hand in their journey. Everybody has a dream, yet some are not gifted like the rest of us; some might not have the right means or the physical abilities to make their dreams a reality.
+
+Music creation requires a lot of natural talent and a lot of hard work. Playing most instruments requires a good amount of practice and only then one can replicate the tune that's been playing in their minds. However being able to hold an instrument in our own hands and being able to play it is something we take for granted. Most specially abled folks might not have the opportunity to be able to play or even hold a music instrument due to physical impairments.
+
+As part of this hackathon, we have developed an AI powered Music Studio Tool - ODIO to simplify the process of music creation. This will enable the specially abled ones to create music out of their imagination. This will help even untrained individuals to easily create music in our music studio with the help of AI.
+
+What it does
+
+ODIO is an AI powered Music Studio Tool for Creators.
+
+It can make the music in your mind come to life, through a new revolutionary process. You don't need traditional instruments, years of learning, nor a group of five people, to create music.
+
+You simply have to Hum and Beat Box into your microphone and ODIO can automatically convert them to how an actual musical instrument would sound.
+
+In hindsight, ODIO uses advanced Algorithms and Artificial Intelligence to automatically convert your humming to the tune of a synthetic violin and beat-boxing into actual drum beats! What's more? You can also drag and drop different beats and tunes to arrange them in the studio UI to create a complete music track ready to play!
+
+The current version supports the following:
+
+Creating Drum Beats- Convert human beat-boxing to the corresponding sound of actual drums. We currently support 3 beats viz. bass, snare, and treble.
+
+Creating Synthetic Violin Tune - Convert human humming to a smooth synthetic violin tune. We are making an effort to make this sound more like a natural violin.
+
+A Studio UI - to arrange beats and tunes for creating a complete musical track
+
+How we built it - "The Developer Section"
+
+The Pitch detection algorithm is based on a fundamental frequency estimator called the Yin PDA with reference to this paper, with slight improvements to suit our use-case, in which we only need to consider the frequency range of the human voice.
+
+Beat classification was achieved by training a Deep Neural Network over our custom created dataset with the input comprising of MFCC features instead of raw audio data. Picking these features as the input to the classifier greatly improved model trainability. Apart from classification of an audio sample into a beat category, the beat module also takes care of onset detection for figuring out the start and end timestamps for extracting the audio for classification and whether a sound should be considered a beat.
+
+For training the model, we used python's Keras library. Keras.js was then used to load the model and its trained parameters in the UI for in-browser predictions.
+
+Apart from these core algorithms, the WebApp heavily leverages Web Audio API for various components like OscillatorNodes for creating sound of desired frequency, Navigator API for acquiring microphone access, etc. all of which were very critical for building the frontend.
+
+Challenges we ran into
+
+The first and primary challenge we faced, was to get a working prototype ready in a short time frame. Given the lack of expertise towards UI/UX in the team, we tried our best to make a minimalistic UI that accomplished as much as a standard Music Studio WebApp would need. UX will play a major role as we intend to create an App which is convenient and intuitive for everyone. That deserves a project of its own.
+
+Technical challenges included precisely extracting samples of the recorded audio, which were part of the same beat, as clips to be fed to the classifier. Data collection was yet another tricky problem for the Beat classifier. Although, we were successfully able to train the model to correctly classify 3 beat categories in our dataset, the model was trained on a small set of users and an environment with minimal background noise. Generating a larger dataset is yet another challenge given the time frame.
+
+Another tricky problem we faced was to make the sound of the synthetic violin more natural. We believe we can get there with help from professionals, as we plan to include more instruments in future.
+
+Accomplishments that we're proud of
+
+Music is something which every one of us holds very dear to our heart. Arriving at an idea that could help change the way music is created in the world, makes us very proud. With Odio we intend to grow the community of creators through inclusion.
+
+We are also very proud that we could drive the project to its completion. We do want to see the project grow even more, and be embraced by creators as well as others who love music, as a means of personal expression.
+
+What we learned
+
+It was a great learning experience, as the project covered various grounds, like implementing an advanced algorithm, training and deploying a deep neural network that yielded considerably impressive results, frontend development that involved learning new APIs core to audio manipulation in the browser, signal processing theory and FFTs that ultimately found use in the discovery of MFCC features that helped improve model trainability, and a myriad of other domain specific as well as generic technical knowledge that we gathered while building this app.
+
+What's next for Odio
+
+We tried to create a working prototype of our idea within the duration of the hackathon, as a result of which we could not implement several features and improvements we had in our pipeline. We truly believe in some improvements which can take ODIO to the next level.
+
+Some of the prominent tasks planned are -
+
+Make the classifier more robust by improving the dataset to include a variety of human voices and background noise
+
+Use advanced music theory, for tempo detection and auto-tuning to automatically improve and correct the recorded beats or tunes.
+
+Features to merge and export final music track as an audio file, to be able to add filters and tune correction of recorded clips, and to be able to cut and trim clips recorded in ODIO.
+
+Add more instruments - Piano, Guitar, Flutes, different Percussion instruments etc.
+
+Improvements in UI/UX of ODIO Music Studio.
+
+Note: Works best on Firefox Web Browser!!

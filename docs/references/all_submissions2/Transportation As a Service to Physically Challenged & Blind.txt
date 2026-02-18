@@ -1,0 +1,13 @@
+Our Main Intention is about Folks who are physically Challenged need to use Public Transportation as normal folks do for their day-to-day activities.
+
+The solution will enable the service using AWS IOT/Mobile App.
+
+It is with just a click of a button the public transportation is enabled using AWS services.
+
+Folks who are using the service don’t need to know the Applications or anything else except a click or a Voice command.
+
+Benefits:-
+No more Longer Wait Times to stand
+No more missing of Public Transportation
+Easy access to Services
+GPS enabled.

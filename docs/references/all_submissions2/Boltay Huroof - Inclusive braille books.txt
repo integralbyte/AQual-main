@@ -1,0 +1,27 @@
+Inspiration
+
+Our Teammate Adeel and Munazza's brother had to study without books, and the reason is that international software does not support our regional languages translation into braille, and manual process of making braille books is much time consuming and painful process. 2nd braille books are not easily readable by sighted people, so the majority of the teachers and family members are unable to help visually impaired students in education because of inaccessibility.
+
+What it does
+
+So we are trying to solve their problem by making software that will translate text into languages into braille and which will be readable by both sighted and blind.
+
+How we built it
+
+We built this desktop application in C#.
+
+Challenges we ran into
+
+braille is another world for sighted, it is hard to understand this world for sighted people at first.
+
+Accomplishments that we're proud of
+
+We pitched our idea to Governor Punjab, Governor Sindh, and the Social welfare minister of Punjab, and all these liked the idea very much for implementation in our whole country in Pakistan.
+
+What we learned
+
+We learned how visually impaired people can use computers with accessibility options.
+
+What's next for Boltay Huroof - Inclusive braille books
+
+We will make complete software with inclusive books functionality which will enable all teachers and parents to help visually impaired students in education.

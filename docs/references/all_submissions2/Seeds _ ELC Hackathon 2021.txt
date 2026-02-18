@@ -1,0 +1,27 @@
+Inspiration
+
+One of our team members personally know a famous MC on her home country's national TV channel. She holds a Bachelor's and Master's degree in Psychology, travels across the country to teach public speaking, and is an active Facebook influencer. Surprisingly and inspiringly, the MC is blind. There are plenty of examples like her who can show that people with disabilities are not "dysfunctional". It takes a great amount of courage for a disabled person to overcome stereotypes to achieve their dreams. However, we can't keep forcing and glorifying their sufferings. As a society, it is our responsibility to help them feel inclusive in the workforce instead of making them the successful (or dysfunctional) odds.
+
+What it does
+
+Seeds is an employment-oriented site for people with disabilities to find their dream careers. With Seeds, applicants may apply with their personal profile, explore career opportunities through a Search function & News Timeline, and Engage in Community Activities, share their voices & connect with others. Seeds reduces the burden of job search on the applicant by allowing companies to post jobs, reach out to disabled people and encourage them to be open for accommodations.
+
+How we built it
+
+We designed Seeds using Figma.
+
+Challenges we ran into
+
+We spent a lot of time discussing issues surrounding people with disabilities like choices of words in the presentation or accommodations that they need. Our team members, coming from different backgrounds, brought meaningful insights and perspectives to our discussions.
+
+Accomplishments that we're proud of
+
+We are proud the fact that Seeds is relatively easy and inexpensive to build in the future, while its impact is surely scalable and positive.
+
+What we learned
+
+We learned that no one can reverse or fix "disabilities", we can only raise awareness for the public to welcome disabled people in the workforce.
+
+What's next for Seeds
+
+To make Seeds more accessible and inclusive, we hope to build Seeds into a working site and incorporate more features, including but not limited to: AI Voice Assistant, Career Resources, Sign Language Translation and Feedback Surveys for users.

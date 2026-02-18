@@ -1,0 +1,81 @@
+Inspiration
+
+The smile of a child is the best peaceful scene for everyone. I think the reason we love children’s smiles so much is that they give remind us of the days when we were young and innocent when we weren’t hurt at all. These days, we often tend to see in our families/friends and within our communities, a few of the kids have been struggling with learning disabilities and the transition to adulthood can highlight the challenges.
+
+Learning disabilities are disorders that affect a person’s ability to understand or respond to new information. These disabilities often tend to cause
+
+problems with listening skills, language skills (including speaking, reading, or writing), and mathematical operations.
+
+problems in coordinating movements, making the child seem (and feel) awkward.
+
+Video games and Digital media play a vital role in many children's lives. As per the research and study, video games and apps that are interactive and educational have a positive effect on children’s brain development.
+
+Games, which involve movement and exercise, can help improve children’s decision-making and overall main functions of the brain.
+
+creating a strong bond with an in-game character can improve the child’s learning
+
+The method of creating fun during these interactive games can help kids learn coding, literacy, and math skills.
+
+Our idea is to create simple hand gesture games which involve a lot of fun and interactivity. This certainly helps the kids to improve their key motor skills and keep them active with full of joy and fun. Also, it encourages them to mingle with their fellow friends easily while playing.
+
+What it does
+
+Gesturing is a natural and intuitive way to interact with people and the environment. So it makes perfect sense to use hand gestures as a method of human-computer interaction (HCI). Gesture recognition provides real-time data to a computer to make it fulfill the user’s commands. Motion sensors in a device can track and interpret gestures, using them as the primary source of data input. The gesture recognition solutions feature a combination of 3D depth-sensing cameras along with machine learning systems. Machine learning algorithms are trained based on labeled depth images of hands, allowing them to recognize hand and finger positions.
+
+Gesture recognition consists of three basic levels:
+
+Detection: With the help of a camera, a device detects hand or body movements, and a machine learning algorithm segments the image to find hand edges and positions.
+Tracking: The system monitors movements frame by frame to capture every movement and provide accurate input for data analysis.
+Recognition: The system tries to find patterns based on the gathered data. When the system finds a match and interprets a gesture, it performs the action associated with this gesture.
+
+Feature extraction and classification in the scheme below implements the recognition functionality in the sequence of the steps mentioned:
+
+Capturing Image frame --->Hand Segmentation --->Hand Tracking --->Feature extraction --->Classification ---->Action output
+
+The system distinguishes a hand from the background using color and depth data.
+
+The hand sample is further divided into the arm, wrist, palm, and fingers.
+
+The system obtains information about the distance from the fingertips to the center of the palm, the elevation of the fingertips, the shape of the palm, the position of the fingers, and so on.
+
+The system collects all extracted features into a feature vector that represents a gesture.
+
+The hand gesture recognition solution, using AI, matches the feature vector with various gestures in the database and recognizes the user’s gesture.
+
+How we built it
+
+Computer vision is a process by which we can understand the images and videos how they are stored and how we can manipulate and retrieve data from them. Computer Vision is the base or mostly used for Artificial Intelligence. Computer-Vision is playing a major role in self-driving cars, robotics as well as in photo correction apps.
+
+Object detection is a computer vision technique in which a software system can detect, locate, and trace the object from a given image or video. The special attribute of object detection is that it identifies the class of objects (person, hands, table, chair, etc.) and their location-specific coordinates in the given image.
+
+OpenCV is the huge open-source library for computer vision, machine learning, and image processing and now it plays a major role in real-time operation which is very important in today’s systems. By using it, one can process images and videos to identify objects, faces, or even handwriting of a human. When it is integrated with various libraries, such as NumPy, python is capable of processing the OpenCV array structure for analysis. To Identify image patterns and their various features we use vector space and perform mathematical operations on these features.
+
+Challenges we ran into
+
+We could see a very high scope in the segregation of a wider range of games. Also, We have less time to have the prototype ready.
+
+Accomplishments that we're proud of
+
+We are very happy to present our idea and a bit proud that we could identify a small set of problems with the solution which has a solicitous impact.
+
+What we learned
+
+We always tend to overlook the small issues around us, which can be resolved within our own scope. But unintentionally, we ignore most of them which can pose bigger problems to future generations. We need to learn and act cautious enough on these small problems and get these issues addressed with some sensitivity and emotions.
+
+What's next for Fun and active games for the children using hand gestures
+
+List of hand gesture games for the design and development but not limited to :
+
+Dancing fingers
+
+Numbering
+
+Color Identification
+
+Educational Quiz
+
+Shapes Identification
+
+Memory
+
+Have to have the games ready and get into action for our cute and energetic little ones :)

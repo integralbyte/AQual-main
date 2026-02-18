@@ -1,0 +1,96 @@
+Inspiration
+
+As we know disabled people face many problems, one of them that caught my attention was that they cannot work in mining industries. Mining is one of the most dangerous jobs around the world. Yearly thousands of people are dying in this industry. Therefore, I selected this project.
+Considering the above circumstances mentioned the following reasons are behind the selection of this project.
+ 1. Serving for our people.
+ 2. Improving myself and expanding my knowledge
+ 3. As a human being I want to have my role in serving people and decreasing miners death ratio
+ 4. Improving my research level: This project needs more research to be completed. Therefore, I
+selected this project to improve my research level.
+ 5. Implementable
+ 6. Making the miner's monitoring process easy
+
+I wanted to make a project that both normal and people with disabilities would use
+
+What it does
+
+Mining is a multifaceted industry, which involves various risk factors within tunnels and underground, which affects the health of miners.
+This project aims at designing a smart helmet for hazardous event detection, monitoring the surrounding environmental conditions and updating information like GPS location and sensor data to the central console for easy tracking and alerting to rescue the miners' lives. This will secure the life of miners in mining industries. The system will include various sensors such as the temperature and gas sensors. Temperature sensor used to monitor the surrounding environment. Gas sensor used to detect the presence of poisonous gases in the atmosphere. GPS will be used to track the position of miners in case of any abnormalities.
+This project can be used for both normal and people with disabilities (deaf and blind people). I have used red, green, and yellow LEDs that deaf people can see and when they see that red LED is on so they can leave the area. For blind people currently they can listen to alerting sound, however, I will expand the project and add Assistive Device in the helmet which will give instructional direction to the blind people.
+
+How we built it
+
+I have gathered the following components and built the project successfully:
+ 1. Red 5mm Round LED
+ 2. Yellow 5mm Round LED
+ 3. Green 5mm Round LED
+ 4. LM35 (Temperature Sensor)
+ 5. MQ-2 Smoke/LPG/CO Gas Sensor Module
+ 6. MQ-7 Gas Sensor
+ 7. Arduino Mega 2560 R3
+
+C946
+ 9. 9V-1A power supply for Arduinos
+ 10. 20cm 2.54MM Male to Female
+ 11. 20cm Male to Male line jumper wires
+ 12. Breadboard 830 points Dual Power Rail
+ 13. On or Off switch (Rocker)
+ 14. Helmet for the system
+ 15. 20x4 character LCD
+ 16. 2.54 Pitch 1*40P Single Row Straight DIP
+ 17. Controller of LCD
+
+This project has two parts:
+Input:
+includes all sensors we mentioned in data gathering sections like (Temperature Sensor, Gas Sensor, Co sensor, GPS)
+
+Output:
+All data that is sensed through sensors are shown to an LCD in the output part. In addition, we will show different states of the underground with these sensors through LEDs which show the state that we are currently in (safe or danger).
+
+Challenges we ran into
+
+I was a software engineer, working on robotics and mining industries was way complicated for me, and time consuming
+
+Finding project components in our country was hard, and the main reason why I have not added those future plans components was that I couldn't find it in our country, otherwise, I have write the codes for all of them.
+
+Data Gathering
+
+Accomplishments that we're proud of
+
+Developing such a huge project alone in less time.
+
+Being an inspiration that people with disabilities can work in any field
+
+Learning many new programming languages, techniques in a few days
+
+Many countries developed Smart Helmet for miners project but no one used these much functionalities, they have worked in a team, while practicing they have burned the sensors many times and they were in that field and built the project in months but I am proud that I did it alone without having any idea or worked in this field. The most inspiring thing is that I did not burn anything while practicing and building the project.
+
+What we learned
+
+Robotics techniques
+
+Learned that nothing is impossible if you have the dedication to achieve your goals
+
+Learned about mining industries
+
+Learned how to communicate with worldwide hackers and benefit from their experiences and ideas.
+
+Learned that people with disabilities have more potential than normal people like Stephen Hawking
+
+What's next for Smart Helmet for Miners
+
+Smart helmet has different parts with different functionalities, like hardware and software tools, but some equipment that has been planned could not be found in our country and due to lack of time I cannot afford it from foreign countries. The equipment that has not been found was a ZigBee transmitter, a receiver for sending and receiving data between miners and control room, another thing that I could not find in our country was the force, and pressure sensor, which was planned to be used for heavy object collision. I will expand my project and add the following parts in my project:
+
+Whenever the miners collide with the heavy objects Force sensor will be used.
+
+An IR sensor will intimate the central console whenever the miner removes their helmet off their head.
+
+Panic switch will be manually operated by the miner to seek help from the central console in highly emergency conditions.
+
+Oxygen supplement will be provided within the helmet to avoid the inhalation of poisonous gases by the opening of solenoid valves.
+
+This information will be sent to the central console through wireless transmission in critical situations using ZigBee Technology.
+
+Database will be used for storing the miner’s identity and the illness they have, and the database will be used to store the underground conditions with the date that will be used in future for surveying and many other useful things which will help our government.
+
+Making Assistive device which will show instructional direction for blind miners

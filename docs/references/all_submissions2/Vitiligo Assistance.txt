@@ -1,0 +1,19 @@
+What is the Idea?
+
+Provide a easy to use customized local treatment to blend in Vitiligo spots on skin, especially in early stages
+
+Potential Impact of the idea
+
+About 1% of the world’s population has a skin condition called Vitilogo, which is characterized by skin loosing pigmentation. In some populations it maybe as high as 2% to 3%. Vitiligo may result in psychological stress and those affected are sometimes stigmatized.
+
+What inspired to have this idea?
+
+The change in appearance caused by vitiligo can affect a person's emotional and psychological well-being and may create difficulty in becoming or remaining employed, particularly if vitiligo develops on visible areas of the body, such as the face, hands, or arms.
+
+How this could be implemented?
+
+The goal is to have a custom applicator, which can read the skin condition (texture, color, tone, etc) and create a lotion real time that is customized to an individual’s skin color. This is supported by an easy to use applicator that can apply the lotion without spills or causing mess.
+
+Tools: Tablet, mobile application
+
+Algorithm: Machine Learning using computer vision, IoT solution for sensing skin conditions, mobile applicator, system design for designing the applicator

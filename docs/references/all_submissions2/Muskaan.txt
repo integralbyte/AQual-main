@@ -1,0 +1,61 @@
+Inspiration
+
+According to survey reports, around 2 lakh tons of food is wasted & 14% people stay undernourished everyday in India. Muskaan application aims to solve the issue by donating good quality excess food to needy people with help of NGO's. With the features of Karma points, Profile upgradation, Food quality detection, Muskaan mingle
+
+What it does
+
+Muskaan will be a centralized platform with no area limitations and will be accessible to all individuals in India. Overcoming the technical glitches faced by the existing systems, it will also include features which will make more and more people engage to donate food. The donor will be rewarded with vouchers on the basis of good karma points earned in the application. On the other hand, to assure people that the food donated is of good quality, a specialized feature to check the quality of food and on that basis give ratings to the food donated. Users before receiving food can be completely assured of the quality of food provided to them. The application itself will be able to generate revenue as an extra means of contributing to the welfare of less fortunate people. Muskaan, a non-profitable android application, is a means of effective food donation drives, which will also assist NGOs in their work and reach out to a large number of people.
+
+Many people post on social media applications like Instagram, Facebook, etc. about the social service or good cause done by them. A social media module (Muskaan Mingle) specially based on food donation services can aid user’s engagement and encouragement on the application. It will also act as a connecting link between the ones who need help and the ones willing to help. Addition to this, It will increase the number of users. More the number of users, the more they will be influenced and contribute their part.
+
+Objectives:
+
+Minimise food wastage.
+
+Engage people to do social activities.
+
+Reach out to people in need.
+
+Features:
+
+Food Donate: Users can donate leftover good quality food to needy people.
+
+Receive: Needy can receive food individually or with the help of NGOs.
+
+Dine: Hotels and restaurants can sell leftover good quality food in very less amounts.
+
+Food quality and Rating: to assure quality of food and generate karma points.
+
+User Upgradation: User can upgrade from normal user to NGO or restaurant. This is to manage access control.
+
+Karma points: Users can receive karma points on the basis of quality and quantity of successfully donated food.
+
+Karma board: where user can see rank of top karma holders.
+
+Karma zone: where users can invest karma points by spinning fortune wheel and earn vouchers and deals.
+
+Muskaan Mingle: Where users can share their contributions and become influencers after reaching thresholds of karma points.
+
+How we built it
+
+Front End: React-Native, NPM
+
+Backend: Firebase
+
+Challenges we ran into
+
+As we are using free onpensource resources (Google Map) some of the features like searching, Nearest distance are not available hence we need to build them from scratch.
+
+Application / Advantages of muskaan:
+
+Wastage of food prevented
+
+People provided with food
+
+Aid to NGOs for food donation drives
+
+Restaurants earning profits for the excess food
+
+People benefitted with vouchers for good KARMA
+
+Collaborators releasing vouchers on MUSKAAN platform

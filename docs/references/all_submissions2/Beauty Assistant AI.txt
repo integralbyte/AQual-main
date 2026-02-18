@@ -1,0 +1,23 @@
+Inspiration
+
+Technology has advanced exponentially to make everyday life easier. Online shopping, specifically, mitigated the need to physically go shopping in stores. We believe that people with disabilities should not be barred from the benefits of online shopping. It is our job as developers to ensure that our products are accessible to everyone - it should not be a privilege to shop online.
+
+What it does
+
+Our Beauty AI Assistant tool allows customers to use voice commands to perform operations on our site. This includes searching for specific products, adding to cart, and checking out. Beauty AI also describes products and reads text displayed on the site directly to the user. This allows users with visual impairments to know what’s on the screen without actually needing to see it.
+
+How we built it
+
+We built the Beauty AI Assistant using Artificial intelligence and Machine learning to train models that will give a hands-free shopping experience. The entire frontend was built using Tailwind and React to give It a complete responsive feel on mobile and desktop. The backend of this application is driven by Laravel. All these amazing modern stack tools allowed us to create a complete functional and responsive UI design.
+
+Accomplishments that we're proud of
+
+With this innovation, we are doing our responsibility to ensure people with disabilities feel welcomed and involved.
+
+What we learned
+
+We learned how designing and developing for accessibility purposes not only allows underrepresented groups to interact with your application, but improves the overall usability for everyone.
+
+What's next for Beauty Assistant AI
+
+Voice access to the web site can be integrated with Amazon Alexa, Google Assistant, and Siri. We have created a functioning demo video and shared the link for our Beauty Assistant AI communicating with Amazon Alexa. Siri can be implemented by saving the Beauty AI's phone number as a phone contact. Eye tracking can be implemented on the site as well to improve accessibility to those that are hard of hearing.

@@ -1,0 +1,37 @@
+Inspiration
+
+During the times of covid, there has been seen that a lot of people face mental health issues and difficulties to communicate and seek help. Many people find it difficult to reach other out for help for any mental issues, they have a fear in their minds to be judged, they don't get a proper solution to recover. So from those real life scenarios where people lost their everything due to this menace, we had decided to come up with an app which would provide a complete platform for mental health recovery and improvement.
+
+What it does
+
+In our project, we have focused on creating a platform where a person can vent out his/her thoughts, emotions or feelings. S/he can know their analysis of their emotions and how they feel at the moment. We have used Symbl.AI to analyse the sentiments and provide a report which they can send anonymously to a therapist and seek help. Apart from that we have developed certain features in our app which would help a person to recover and improve his/her mental health such as a 21 Days Challenge feature, pen-down-your-thoughts feature, a chatbot, a music player and motivational resources feature.
+Speak out about your feelings here if you feel uncomfortable to share with other
+Get an analysis of your feelings and receive a complete report
+Can share the report with a professional therapist and seek help
+Take a 21 days challenge where you can complete quests and that would help you improve your mental health
+Talk with a chatbot - Alex and feel better
+Listen to soothing music when unsettled
+Can pen-down-your-thoughts
+
+How we built it
+
+We have built the project using React(for frontend), Node.js (for backend), MongoDB (as Database), and Symbl.AI for sentiment ananlysis.
+
+Challenges we ran into
+
+We have worked with Symbl.AI for the first time, so that was one of the challenges. The main challenge was to complete the project within the timeframe. We even faced issues while deployment but are happy to have finally successfully completed it.
+
+Accomplishments that we're proud of
+
+Every small step felt like an accomplishment while we were making this project from setting up the idea till resolving bugs during deployment, but when we finally completed the project it was definitely an overjoying moment for us.
+
+What we learned
+
+First and foremost thing that we learnt is time management, it was the biggest challenge to complete the project in the given time frame, we also tried to follow all the best practices. While making the project we learnt about various aspects of mental health. Also, we learnt and got familiar through Symbl.AI.
+
+What's next for Heart-to-Heart
+
+Make a blog section where people can post their stories which would benefit and motivate others
+Add authentication for therapists and arrange virtual meetings for help
+Anonymously get consultations from therapists
+Improvise the chatbot

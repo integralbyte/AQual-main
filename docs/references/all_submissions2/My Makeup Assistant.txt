@@ -1,0 +1,28 @@
+Inspiration
+
+There are currently many technologies being developed for virtual try-on, such as SnapChat or Tik Tok, including for Estée Lauder through Perfect Corp.
+Estée Lauder chose Perfect Corp.’s YouCam Makeup virtual try-on solutions to deploy their custom iMatch™ experience in stores and online around the world. Using their YouCam technology, it enables customers to enjoy the AI-driven augmented reality experience of instantly, and virtually, trying on makeup.
+However, I noticed through my research of the VTO technology that Estée Lauder is employing, that it isn’t necessarily accessible-friendly to those who are visually impaired and can’t take full advantage of such technology.
+
+What it does
+
+To create an extension of the face-mesh technology that VTO uses, which scans the face and pinpoints essential areas for applying make up. It then uses object detection to determine if the correct brush is being used, which is determine through a custom data-set of images of Estee Lauder make up brushes. With the entire sequence of all these events executed by automated voice messages, it enables an automated makeup assistant, essentially a beauty version of “Be My Eyes.” This enables an experience that not only champions the face-mesh technology VTO uses and the opportunities it created for the tech-beauty industry, but creates another layer of accessibility for visually impaired individuals.
+
+How we built it
+
+Face mesh technology: The solution is bundled with the Face Geometry module that bridges the gap between the face landmark estimation and useful real-time augmented reality (AR) applications. It establishes a metric 3D space and uses the face landmark screen positions to estimate face geometry within that space. The face geometry data consists of common 3D geometry primitives, including a face pose transformation matrix and a triangular face mesh.
+Using this pipeline, it would enable the initial sequence of scanning the face and creating pinpoints of designated spots to apply make up, by using the Face Landmark Model
+
+https://google.github.io/mediapipe/solutions/face_mesh.html
+
+Object detection: The difference between VTO and my Virtual Makeup Assistant, is that in the next event of the sequence, it uses a custom dataset of images of make up brushes to help the user detect if the right brush is being used for the designated make up instruction.
+
+https://github.com/google/mediapipe/blob/master/mediapipe/examples/ios/objectdetectiongpu/BUILD
+
+Challenges we ran into
+
+Actually building the custom dataset and implementing it in a way that we could test it for usability purposes.
+
+What we learned
+
+There's still a lot of work to do to flesh out this idea and be able to conduct an "out of the box" experience where we would be able to test if this extension of VTO will actually help visually impaired individuals and increase accessibility.

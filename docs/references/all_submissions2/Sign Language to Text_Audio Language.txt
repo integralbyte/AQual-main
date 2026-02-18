@@ -1,0 +1,18 @@
+Converting Sign Signal language to textual and voice translation to facilitate effective communication
+
+What inspired to have this idea?​
+Speech is the primary form of human communication and create hindrances for a disabled individual to communicate freely when they are not able to convey through sign language to the masses. Sign Language is a visual language for deaf and mute people. Unlike the convey of sound patterns, sign language uses the body language, and manual communication to fluidly convey the thoughts of a person.
+The idea gives the invaluable feel of an actual verbal conversation.
+
+Potential impact of the idea?
+About 5% of the world's population is deaf and mute. Apart from this, over 1 billion young adults are at risk of permanent, avoidable hearing loss due to unsafe listening practice
+
+Real time sign language to speech and textual translation would consists of the following aspects:
+
+*Hand Detection
+*Hand Movements & Posture
+*Facial Expressions
+*Acquiring Image
+*Displaying Texts
+*Text2Speech
+*Audio Output

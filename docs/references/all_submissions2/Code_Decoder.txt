@@ -1,0 +1,36 @@
+Problem
+
+We write some code or we copy the code from some resources but we are unable to interpret the logic/working behind the code.
+While writing the code, when we get stuck into the problem, we directly redirect to Internet but sometimes we are unable to get in-depth knowledge about the working of code.
+
+Solution
+
+We built a website that can decode any complex code easily.
+
+We are targeting to deliver a comprehensive analysis of the code with the help of machine learning.
+
+Using machine learning, we are planning to add automatic generation of pseudocode based on the user's input.
+
+Tech Stack
+
+Python, ReactJS, TailwindCSS, Pylint, FastAPI, FlowChartJS, Sqlite3.
+
+Challenges we ran into
+
+Able to Integrate Flow charts for any code.
+
+Able to Generate PseudoCode.
+
+Able to Provide Code Suggesstions.
+
+Accomplishments that we're proud of
+
+We were able to completely Integrate all the Idea's, we thought to integrate in our Web Application.
+
+What's next for Code_Decoder
+
+We will be adding more functionalities to it.
+
+Video Presentation
+
+https://vimeo.com/638287166

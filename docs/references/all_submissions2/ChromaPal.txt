@@ -1,0 +1,41 @@
+Inspiration
+
+Colors add uniqueness and beauty to everything that we see in our lives. Color blindness (color vision deficiency, or CVD) affects approximately 1 in 12 men (8%) and 1 in 200 women in the world.
+
+I want to help people with color blindness by enabling them to have a better internet surfing experience. People with color blindness face difficulties in seeing some colors while surfing through the websites - they don't get to see the content which is displayed in the colors which they can not see clearly.
+
+For example, a person who has a type of color blindness called deuteranopia can not see shades of green. Hence, he might face difficulties in seeing texts and images with shades of green. ChromaPal can help the person by optimizing the color scheme as per the type of color blindness the user faces.
+
+What it does
+
+ChromaPal is a Chrome browser extension that optimizes any web page according to the type of color blindness faced by the user. ChromaPal provides better accessibility to people with color blindness by changing the color scheme of the website to a color comfortable according to the type of color blindness faced by the users.
+
+All the content including images, texts, buttons and backgrounds are automatically changed into the color scheme which is comfortable for the user using this chrome extension.
+
+How we built it
+
+ChromaPal is a Chrome browser extension. Talking about the technical part, I have used JavaScript to tweak the colors in the CSS properties of the website - according to the type of color blindness chosen by the user.
+
+Challenges we ran into
+
+Tweaking the CSS with JS was challenging.
+
+To learn how to make chrome extension as I have developed chrome extension for the first time.
+
+Accomplishments that we're proud of
+
+Making a successful submission
+
+Overcoming errors
+
+Making a project for social good that can be helpful to a wide community
+
+What we learned
+
+Learning to make a chrome extension.
+
+Packaging the browser extension.
+
+What's next for ChromaPal
+
+Publishing extension on Google Chrome.

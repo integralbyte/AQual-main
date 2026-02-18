@@ -1,0 +1,13 @@
+Inspiration ELC kickoff, the speaker wrote about how no one has been able to figure out the solution to tying a good ponytail for the disabled community. I spent a few hours watching youtube videos on how to tie a ponytail with one arm. I tried it myself. Brought almost to tears with frustration. Knew there needed to be a solution.
+
+What it does Four drones use computer vision, AI learning, gyroscopic flight, and gentle hair gathering claws to deliver simple updo's.
+
+How we built it Figma and Animaker
+
+Challenges we ran into Time
+
+Accomplishments that we're proud of It could work and the app is simple
+
+What we learned Empathy
+
+What's next for DroneBraid Hardware creation, testing

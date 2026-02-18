@@ -1,0 +1,43 @@
+Inspiration
+
+I am blind and growing up in India, I struggled to access accessible textbooks. None of my STEM textbooks were accessible in 11th and 12th grades and I had to type out all of my textbooks so that I could read them later with my screen reader. In fact, according to WebAIM, over 98.1% of the top 1 M webpages are inaccessible and the statistics are pretty alarming when it comes to inaccessible documents produced and shared as well. This is why we call it a "book famine" in our community. Covid-19 has only made it worse with a proliferation in the creation and distribution of inaccessible content. This problem is not restricted to India or developing countries. Even in the United States, there were 35 litigations in just July and August last year against universities for not being able to provide accessible resources to their students with disabilities. Part of the reason is the increase in disability disclosure on college campuses and the understaffed disability offices.
+
+Last year, a few blind friends with similar lived experiences came together to work on this problem. We evaluated existing optical character recognition (OCR) technology that converts images into text, and soon realized that they were very limited in their capabilities. While they could handle plain text documents (e.g. simple text documents etc.), they could not handle complex layouts such as tables, lists, content containing math, multicolumn pages etc., nor could they provide support for accessibility semantics such as appropriate heading levels, regions among others. We thus worked to develop custom AI models built on top of existing OCR solutions (Microsoft Azure's OCR technology) that helped accomplish two things-(1) identification of layout elements such as tables, math content or multiple columns and (2) handle these various layouts and represent them accurately to a blind user when reading with a screen reader including supporting accessibility semantics and best practices. We called it I-Stem document accessibility services (where I-Stem refers to Inclusive STEM, i.e. using STEM to realize inclusion). We have been able to achieve pretty good results with an overall model accuracy of around 85%.
+
+During this hackathon, we wanted to take it a step further. We realize that AI is not perfect and will not be anytime in the near future. Therefore, we wanted to combine AI intelligence with human intelligence and bring down the time, effort and cost involved in document accessibility remediation. Thus, we worked on I-Stem document accessibility remediation tool. This tool uses our AI models and combines that with a rich editor that allows humans to correct any mistakes made by the AI tool. For instance, if AI incorrectly detected a paragraph as table, the human remediator can relabel it as a paragraph and our automated algorithms will use this information to reconstruct that region as a paragraph without any human input.
+
+What it does
+
+the intelligent remediation system consists of three steps.
+
+Layout inference editing: Using our AI models, we detect the various layout elements (e.g. tables, lists, headings etc.) on a page and overlay these on the original image. Using this, a human remediator can correct any layout identification errors. For instance, if the AI model incorrectly detected a region of a page as a table when in fact it was a list, the remediator can indicate that.
+
+Text editing: Using the inputs received from the human remediator in step 1, our algorithms reconstruct the document. For instance, if a table was relabeled as a list, the algorithm will reconstruct the table contents as a list to make it efficient for the remediator and help them save time. In this step, the remediators are shown the reconstructed document and they can make content changes. For instance, certain words might be recognized incorrectly by our AI systems or a line or two might be omitted here and there. this step helps a remediator fix these errors.
+
+Reading order: The final step allows the remediator to change the reading order. Reading order is crucial for screen reader users. It determines the order in which various elements on a page will be read out to the user. This step shows the remediator a list of various layout elements and the order in which they will be read, allowing them to change the reading order appropriately. the remediator can also see the HTML preview of the document and make any changes.
+
+In summary, the remediation tool uses the intelligence from our AI systems with human input to generate completely accessible and remediated documents. We tested this out with two remediators and observed a 60% reduction in the time that it took them to remediate a document, reducing from an average of 25 Mins. to under 10 Mins.
+
+How we built it
+
+We used existing OCR technology and built custom models on top of that (object identification models to identify various layout elements and custom recognition models to handle various layout elements). We then used this to process the document, showing the results to a human remediator. We then developed algorithms to consume human input and reconstruct the document. For our rich editor, we used DraftJS with customization and the web application more broadly uses MERN stack.
+
+Challenges we ran into
+
+There were several challenges we ran into.
+
+There was slight discrepancy in the bounding boxes we received from various tools which led to overlapping regions and issues when reconstructing the document. We thus had to manually write logic to standardize coordinates.
+
+there were no off-the-shelf editors that provided all the functionality we needed for our project, and so we had to write custom code.
+
+Accomplishments that we're proud of
+
+We are proud that we were able to develop a remediation portal end-to-end and test it with remediators with noticeable improvements in time and effort involved in remediation. One nonprofit is also excited to pilot it.
+
+What we learned
+
+While working on the project, we learnt a lot about various computer vision concepts, experimented with models and algorithms, learnt about human-in-the-loop techniques and applied human-centered design principles. All of this was very exciting and made us better developers and designers.
+
+What's next for Intelligent document accessibility remediation
+
+We want to add some more features (especially around math editing), make it more robust, test it with more users, pilot with organizations and integrate this with the broader remediation flows in academic institutes, thereby making the remediation process more efficient and cost-effective for all, ultimately ensuring an equitable and reliable access to textbooks and content for people with print disabilities.

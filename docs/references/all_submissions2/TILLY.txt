@@ -1,0 +1,11 @@
+What it is
+
+TILLY is a head-worn lightweight and wireless pair of glasses, which can be controlled either through a wireless handheld controller or a set of voice commands. It is designed for visually impaired and legally blind to help reduce barriers and make the world more accessible for people with disabilities, giving them more access to information, communication, and independence.
+
+Why Tilly?
+
+The device is named after Matilda (Tilly) Aston – writer and teacher who had spent many years promoting for the vision-impaired people’s rights.
+
+What it does
+
+The device evaluates the environment with RGB cameras, thermal infrared camera and ultrasound sensors, provides data processing with Computer Vision and Machine Learning on separate mobile computer connected to the glasses with a cable or wirelessly and with sound signal and vibration informs the user about objects. Voice commands are handled by stereo microphones. Self-adjusting ergonomic arms spread pressure evenly across the temple. The features of the device are as follows: pinpoint and indoor navigation; outdoor GPS navigation; object and on-demand wiki; hazard alerts; area discovery; onboard LTE; “Hey, Tilly”? – the voice assistant; emergency dial (automated).

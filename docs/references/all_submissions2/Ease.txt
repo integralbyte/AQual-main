@@ -1,0 +1,43 @@
+Inspiration
+
+With 18.5 million people worldwide who bear disabilities affecting their communication and interaction with others, it’s a wonder how support for the disabled community is lacking.
+
+While support for the disabled exists, these resources are not as accessible to those not “disabled enough,” whether in terms of degree or in a timespan.
+
+The world ultimately perceives disability as a binary when it is meant to be a spectrum. These issues have translated into the assistance available for the disabled being hard to access.
+
+For the disabled community, our insensitivity has translated into inaccessibility.
+
+It is how Ease came to be as the support that is easy to access and eases the needs of those with physical disabilities.
+
+What it does
+
+Ease is an assistive mobile application that provides easily accessible support to those with physical impairments. It involves a combination of assistive technologies for sight, hearing, speech, and mobility features.
+
+For one, Ease supports your sight by dictating your surroundings and alerting you of nearby obstructions through a camera with LiDAR technology. Besides that, it can assist with your hearing by translating voices into captions with automatic speech recognition. Ease can additionally support your speech by converting what you type into what you would like to say and clarifying your speech impediments with machine translation and speech synthesis. Moreover, it assists the physically disabled by providing remote control access to home appliances without the hassle of standing up and utilizing the devices themselves. Users can also use Ease without disabilities to promote inclusivity in our daily interactions with them in the world.
+
+In addition, the application can support you in navigating the digital and physical space. With Ease, you can navigate app functions via speech and generate subtitles for all videos and audios you encounter online. Likewise, it can accommodate you through the physical spaces of the post COVID-19 era with its Ease Maps feature. It shows establishments paired with reviews and ratings from other disabled people, so you can check how disability-friendly an establishment is and leave your reviews. Correspondingly, it serves as a virtual map and entry for Ease Hubs. Ease Hubs are essentially public safe spaces for commuting disabled individuals with self-help panels and various assistive tools tailored to their needs. Ease even extends its assistance as a website to accommodate those who work mainly using desktops during the pandemic to expand our scope of access.
+
+Ease is ultimately an app that supplies sensible and sensitive support to those with sight, hearing, speech, and mobility disabilities. It assists their way of communicating with others, living at home, and navigating digital spaces. It equally allows you to review establishments based on their amenities' and services' disability friendliness, incentivizing these businesses to be more accessible. Furthermore, it serves as a key to physical resting zones for supporting disabled people in comfortably going out and about in public spaces when COVID-19 circumstances pass.
+
+How we built it
+
+We started by conducting UX research to dictate our app’s human-centered design direction.
+
+Afterward, we conceptualized our application using affinity diagrams, crafting a user persona, and mapping a user journey. Our ideation process fundamentally addresses the inaccessibility of assistive technology for those with multiple physical disabilities unrecognized for the extent and duration of their special needs.
+
+Finally, we utilized a multidisciplinary approach to mobile app development prototyping with graphic design and UX/UI design on Figma.
+
+Challenges we ran into
+
+The team found challenges in three areas of the project:
+
+The most challenging part of this project was conceptualizing an application that was politically adherent to the challenges and struggles people face in the real world. The team found it particularly challenging to develop an application that could have a tangible and actual impact on the lives of those people struggling with disabilities.
+
+Building on the previous challenge, the team lacked members that had any first-hand experience with debilitating disabilities, constraining the information and data to research, making it particularly challenging to tackle the previous challenge.
+
+Finally, the team was restrained to prototyping only. This is was because of the lack of members who knew how to code. As such, the team had to make do with prototyping an application with different features, without code.
+
+What's next for Ease
+
+The next step Ease should take is scaling the application to the physical world through Ease hubs. Ease Hubs are public safe spaces for commuting disabled individuals to take a step back from the hustle and bustle of the city with self-help panels and various assistive tools tailored to their needs. Hubs can be located on the application through the Ease map and can be accessed through a QR code scanned at the hub itself. This move guarantees scalability for Ease and extends its reach to physical spaces and makes safe spaces more accessible

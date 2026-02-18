@@ -1,0 +1,40 @@
+Inspiration
+
+People with various disabilities are much stronger than the average person.
+But even strong people have problems, and the Volunteer app is one of the ways to help.
+
+Let's say I have some problems with movement, but I need to change apartments.
+I need help with moving. I create a task on the map, add a description and the task is added to the shared pool of tasks.
+Any volunteer can select this task on the map and help me.
+
+What it does
+
+First, you need to register and choose a role: you are a volunteer or you need to help with something.
+Then create task OR take task on a map.
+
+How we built it
+
+We build API service and IOS mobile app.
+API deployed via Heroku (https://objectiver.herokuapp.com/swagger/index.html)
+
+Challenges we ran into
+
+Time was our enemy.
+
+Accomplishments that we're proud of
+
+We have strong skills with back-end development, and creating "another web service" was easy like a lemon squeeze.
+But building a mobile app for the first time was a challenge. We built it from zero to hero.
+
+What we learned
+
+It was our first IOS app.
+We learned how to build a mobile app via SwiftUI and integrate a map via MapKit
+
+What's next for Volunteer
+
+Bug fixing
+
+Audio and voice support for blind people
+
+More gamification (different points for different tasks, achievements)

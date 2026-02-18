@@ -1,0 +1,43 @@
+Inspiration
+
+Estee Lauder Companies has been built on the pillars of Inclusion, Diversity and Equity. Disability inclusion is growing and there is untapped consumer spending power. 1.3B people worldwide, represent $8Trillion USD in spending power and only 4% of businesses focus on making offerings inclusive of disability. Speaking with Monica Rastogi, Reginal Director For Inclusion, Diversity & Equity, Estee Lauder Companies we had invaluable insights about how accessibility lowers the barriers by providing equal access and opportunity to people with a diverse range of hearing, movement, sight and cognitive abilities. We also were inspired by the journey of Estee Lauder Companies to focus on developing accessible and inclusive solutions to help tackle challenges that people with disabilities face daily.
+
+As part of our contribution towards this journey within Estee Lauder Companies, we have come up with an idea called ‘incuesive’ that focuses on a community of ageing consumers or those with limited vision or learning disability.
+
+What it does
+
+InCuesive is a shopping aid that utilises Quick Response [QR] technology to enable consumers in the disability community to get information about a product through text to speech or pre-recorded audio using their own personal devices. While there are text to speech browser extensions that playback the entire webpage the consumer is browsing and for the consumer to wait until the text to speech reader plays the content they are interested in, inCuesive will put the control back to the consumer to decide which section of the webpage they are visiting they would like to listen to. InCuesive will also allow the consumer to play any number of times, just their specific content through the controller that would be available embedded within the website.
+
+This will be a step forward for the community as shopping doesn’t have to be overwhelming and difficult but empower the trust and their independence.
+
+How we built it
+
+We have used a QR generator to generate a barcode for a product, that would route the consumer to the specific product page on brand.co.uk website. The generated bar code would be put on the product packaging. On the product webpage, all possible sections of the product that the consumers would be predominantly interested will have a Text to Speech icon added against it. Most of the text to speech convertors that are available as open source provide an animated reading of the content that still doesn’t feel to be inclusive to the community, so we opted to have a human record the appropriate content and have that accessed as the consumer touches the Text to Speech icon. We also envisioned a controller that will allow when the content is played to be paused, stopped or played that would put the control at consumers hand.
+
+Challenges we ran into
+
+Access to a text to speech convertor was a little harder than we thought. But in due course, we realised that the animated voice of the conversion of the text didn’t appear that it will provide a high touch experience. We then decided to record the audio of the product description to be then used when the consumer would want to play the content. As we trialled the human recorded audio, we had to be mindful for it not to appear robotic and have a human conversational and interaction tone to it with also focus on clearer pronunciations for ease to understand.
+
+Accomplishments that we're proud of
+
+Firstly, we feel proud to have an appreciation of what Inclusion means for the disabled community and the journey we all have to play a role in for the community. Fruition of what was an idea to a near prototype was another feat that we are proud of and we look forward for next steps towards making inCuesive a reality.
+
+What we learned
+
+A shopping aid will be convenient, non-invasive and can be accessible to all with their personal devices.
+
+There is a potential to enhance the influence of the consumers purchasing decision for a product that they may have browsed online and reminding them of its details in a new environment and perspective.
+
+With an immersive and self-controlled text-to-speech reader it can be specifically helpful for those with learning disabilities as the use of audio and visual aids as the main narrative for helping them make discover products, can enhance the focus on the content rather than the act of reading.
+
+Heightening the capabilities that text-to speech browser extensions already provide by going a step further and enabling this within the webpage itself is possible and this will ensure a high touch experience in store that is more personalised, time efficient and accessible.
+
+What's next for InCuesive
+
+Conduct a focus group review with participants from the disabled community to hear their thoughts and feedback.
+
+Review on how this can co-exist and enhance the experience for the consumers in the community through existing products and platforms in the technology space – For Eg. Be My Eyes, NeatBox, NaviLens
+
+Build a full working prototype end to end with support from a brand, creative studios team, technology teams and I,D & E team
+
+Pilot the prototype for a brand/store to learn more and plan for further roll out.

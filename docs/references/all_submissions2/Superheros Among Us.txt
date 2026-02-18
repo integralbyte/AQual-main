@@ -1,0 +1,27 @@
+Inspiration
+
+The inspiration drew from experiences volunteering and working with mentally and physically disabled persons and realizing how normalcy can be one of the most important activities and to show off the inspirations they are
+
+What it does
+
+The solution will involve a kiosk with a display and camera at the top. From there, a person can approach and we will have an AR scenario where it'll do an avatar of a person but in a superhero outfit. For example, for physically disabled persons in a wheelchair it'll create an avatar of them in a Batman or Wonder Woman costume. For visually impaired, same scenario but we will use verbal descriptions as to what the outfit looks like. From there it will post to ELC social media with hashtags to help bring awareness around persons with disabilities but more importantly show off the true superheros they can be. Our intent is more around awareness and creating a fun environment for everyone.
+
+How we built it
+
+We began to utilize our Content Management System to push content to and using a Logitech camera and Shuttle PC to inject the imagery. From there we were looking to utilize the Unreal engine and characters to craft the avatar of the person.
+
+Challenges we ran into
+
+Largest challenge was simply time. While the concept was able to be put together within the time constraints of the challenge, we were not able to get an MVP utilizing characters and the Unreal engine up and running.
+
+Accomplishments that we're proud of
+
+What we feel is a great idea that can bring an enjoyable activity that may typically be reserved for those who are able bodied. More importantly, was the education learned throughout the entire GSL team on how to shift looking at the world and how to rethink commercial deployments, including the importance of ADA compliance and beyond what the compliance calls for.
+
+What we learned
+
+As mentioned above, one of the biggest lessons learned were to highlight the importance of inclusion in digital experiences we craft in commercial deployments.
+
+What's next for Superheros Among Us
+
+We're going to continue developing the idea to utilize in an actual scenario and at the very least take lessons learned to apply for other projects we are involved with

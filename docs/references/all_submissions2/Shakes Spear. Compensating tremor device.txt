@@ -1,0 +1,15 @@
+Tremor is one of the most prevalent movement disorders, affecting 30+ million people worldwide. Tremor complicates routine activities: working, eating, causing “social disability”, limiting engagements.
+
+Risk factors: multiple sclerosis, stroke, neurodegenerative diseases, anxiety, panic. Symptoms can appear at any age and gender. 5-10% of people 40+ have essential tremor.
+
+Problematics scope motivated us to build an inclusive solution for people with tremor or willing to improve moves precision.
+
+Shakes Spear is a robotics device, compensating rhythmic shaking, assisting people in precise objects holding and moving. It uses accelerometer, gyroscope to detect tremor intensity and nature, motors apply compensatory and stabilizing efforts.
+
+Device records tremor intensity data for medical analysis to precisely adjust treatment with help of machine learning algorithms.
+
+Varying tips surfaces help flip pages, navigate smart screen, hook an object.
+The biggest challenge: to design robotic clamps and to find proper control interface unrelated to movements. We opted for voice management interface. We increase working time, converting natural vibrations into electricity. The device is waterproof and robust to survive falls.
+We validated technology and UX with people with movement disorders, proved it as an inclusive solution.
+
+We will improve device functionality and apply machine learning algorithms and cloud technologies.

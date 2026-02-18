@@ -1,0 +1,68 @@
+Inspiration
+
+Programming is now a part of the primary education curriculum as it becomes a crucial 21st-century skill for various employment fields. Hence, through programming, pupils acquire many vital skills such as creative and computational thinking and gain hands-on abilities such as building electronics and integrating technology into their daily lives. However, commonly used programming tools depend on visual elements, making them relatively inaccessible for visually impaired children. This can lead to an inequality in developing the skills mentioned above for the visually impaired community. To that end, we developed an affordable tangible programming tool for visually impaired children that focuses on creating music with algorithms. We chose music creation because it is one of the most preferred and accessible creative subjects for the visually impaired community.
+
+What it does
+
+Budgie is an affordable tangible programming tool to create music with algorithms. Our block set consists of twenty-five coding blocks varying in levels of perceptual information (shape and surface detail). These design decisions were made with the guidance of visually impaired developers. The music blocks only require NFC stickers for fast and reliable recognition, and we synthesize the music on Android phones.
+
+How we built it
+
+Our design process consisted of three main steps. First, we conducted participatory design sessions with visually impaired developers. Second, building on this experience, we derived design considerations for our tangible music programming kit. Lastly, we developed our prototype and gathered feedback from mixed-visual ability students. Below we elaborate on our development process further.
+
+Participatory design workshops with visually impaired developers:
+
+We formulated this research step to identify visually impaired children's needs in a learning environment and derive design considerations. We conducted a workshop session with two visually impaired developers who work in a children-oriented technology company and have been coding for more than two years. They have experience in teaching coding to visually impaired children and know about the obstacles they encounter. In our workshops, we gathered their input on how to design the music blocks.
+
+Formulating design considerations:
+
+As a result of the participatory design workshops, we extracted three primary design considerations for the tangible music kit.
+
+(1) Avoid the extensive use of the Braille alphabet: The developers stated that the students spend a lot of time trying to read and remember the codes. So, in our design, we only used the Braille alphabet for communicating the musical notes.
+
+(2) Do not use various feedback modalities to recognize the blocks: Using several feedback types (i.e., audio, haptics) to help children recognize the function of the blocks might overwhelm and confuse the students. We decided to use only shapes as the distinctive feature between the blocks.
+
+(3) Use abstract and basic shapes rather than detailed icons: Surface engravings need to be easily discernible by touch and conceptually understandable at the same time. For example, a piano icon can be engraved on a tangible surface, but the students might not know what a piano looks like or need extra time to comprehend the engraving itself. Therefore, we adopted simple icons and explored surface information alternatively.
+
+Conceptual Prototype:
+
+We designed twenty-five tangible block pieces and developed an Android application. The blocks allow students to design an algorithmic melody with different octave, rhythm, and sound. Tangible blocks are laser-cut cardboards with NFC stickers inside. We used card-board as an affordable and fast solution, but it can be 3D printed or built by any other material that the students are comfortable with. To read the NFC stickers and run the output, we developed an Android application. We didn't use a camera system to recognize the blocks because the system would constrain the working space due to the camera's viewing region. Hence, students would not understand if the block is in viewing the region or identify such a problem easily. To keep track of the blocks on the surface we used a simple rack. Additionally, they can check the program by switching to the info area and then tapping onto the RUN block to hear all the script.
+
+The Android application recognizes the blocks with NFC stickers as the coder moves the phone over each block one at a time. As the last step, the play block is scanned and the melody plays from the speakers. The application has two modes: code and info. To create the code and play the melody, students need to be in code mode. If students switch to info mode, they can listen to the functionality of the blocks.
+
+The design of the blocks programming language has a very similar style with Processing language. The programmer needs to specify the attributes first, then define the object that will carry the properties. We utilized Processing language as the core of our tangible kit.
+
+Trying out the conceptual prototype with visually impaired children:
+
+We conducted a user study to observe children's interaction with the tangible blocks and the mobile device. Fourteen visually impaired students (7 boys, 7 girls, Mage=12.5) with various socio-economic statuses participated in the study.
+
+We designed this user study structure to make participants experience sounds, learn the logic of creating algorithms and learn musical terms such as notes, octave, rhythm, melody, tempo, and sound.
+One of the most prominent findings of our user study was participants’ enjoyment and engagement with the system. The participants were smiling, talking excitedly, and working very carefully with the system throughout the study. Through this user study, we were also able to identify the challenges of our prototype and the future steps of our project.
+
+Challenges we ran into
+
+Starting the design process with the support of visually impaired developers led us to solve most challenges before they occurred. Yet, in the workshop with mixed visual ability students, we encountered a challenge related to distraction. To explain, the groups need to run their code occasionally to hear the creation. Throughout the study, a cacophony of musical sounds emerged, which was slightly distracting. Regardless, the participants were able to maintain their focus on the task. Ideally, children will work in pairs to scale the project and can use headphones to overcome this issue. In this way, many children will be still working in the same room, but only their conversations would create a slight noise.
+
+We would like to extend the curricular materials and tool's capability, but reaching the right community (teachers, developers, etc.) to support the development process is a challenge.
+
+Accomplishments that we're proud of
+
+Our system is the first algorithmic style- tangible music creation platform for visually impaired children and provides several tangible interaction design considerations for students with low to zero sight.
+
+Budgie has the potential to support children's engagement and collaboration with each other. We further saw that the design of the blocks was easy to differentiate and use. After the user study, all students stated that they would like to pursue programming education, which indicates our design considerations' ability to support their needs.
+
+What we learned
+
+Developing Budgie with visually impaired developers allowed us to understand the community better. We learned their needs and solved many possible challenges beforehand, which showed the benefits of d their needs and solved many possible challenges beforehand, showing the benefits of a participatory design approach.
+
+We explored various interaction strategies, output modalities, and communication styles to enhance the flow of the coding process. We learned structuring a multi-level information flow in interaction and coding is a better way to grasp information.
+
+What's next for Budgie: An Inclusive Tangible Music Programming Environment
+
+After the encouraging findings of our workshops, we will pursue developing our system with the following steps:
+
+To fully develop the computational thinking skills of visually impaired children, we aim to introduce additional blocks to use abstraction, decomposition, or pattern recognition skills while creating the algorithm.
+
+We will expand our design to meet the programming curriculum standards. For example, we will alter our design so that it allows tinkering and remixing of the projects.
+
+We would like to build an inexpensive commercial kit that schools can easily get and start coding.

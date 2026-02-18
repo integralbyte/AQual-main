@@ -1,0 +1,23 @@
+Inspiration
+
+We are inspired by the complexity of this challenge, and how we can create a solution that helps broaden innovation in accessibility across ELC, not just for new products but also the entire collection of existing goods and services. Instead of a single solution, we’re proposing a holistic service that connects employees, customers, and experts in accessibility to rally around human-centered innovations.
+
+What it does
+
+ACT (Accessibility Companion Tool) is a platform to find and evaluate products and services. ACT is easily searched and tagged by disability area, product type, and user.
+
+Challenges
+
+The sheer volume of opportunities in the accessibility space! :-)
+
+Accomplishments that we're proud of
+
+Our solution itself is also designed with accessibility in mind. For example, our video has closed captioning and our deck is designed for use with screen readers.
+
+What we learned
+
+One of the biggest learnings for our team was to reframe away from a perception of individuals with permanent impairments, and to see the value of expanding our efforts to also include situational disabilities.
+
+What's next for ACT
+
+We hope to partner with ELC to build out this tool. We’re ready to ACT!

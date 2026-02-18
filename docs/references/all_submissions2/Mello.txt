@@ -1,0 +1,43 @@
+Inspiration
+
+This idea was conceived after we learned about how people with disabilities face a lot of different challenges in their daily life.
+The pain which they have to suffer and the dependence on other people just to live their regular life.
+Over 40 million people worldwide suffer from Visual Impairments such as Blindness or Lower vision.
+Mello was thus created to solve these difficult challenges which are commonly faced by Visually Impaired People.
+
+What it does
+
+Mello is an AI powered device which communicates with us on certain commands just like Amazon Alexa or Microsoft Cortona would do. Initially we designed Mello as a smartwatch which instructs any visually impaired person during any part of his daily life
+like it would help to reach a destination or avoid obstacles while walking.
+But as we moved on we decided to implement Braille into it such that they can also feel these instructions when necessary. Also we had some long discussions regarding how many cells we are going to put and together we decided to go with 6 blocks so that it would be easier to read long texts.
+We also added features like pulse rate verbal response presenting the current pulse rate of the individual and location services are also activated which will ensure the best route possible for the journey. Mello not only has verbal guidance throughout journey the person covers but also alerts about inconveniences or danger in the way.
+
+How we built it
+
+Various Deep Learning models is used to detect different types of dangers or inconveniences which are present in the path of the User.
+Google Maps API is used to find out the different routes and guide the User throughout their journey.
+Natural Language Processing was used to detect the commands provided by the User and effectively respond/instruct them.
+
+Challenges we ran into
+
+The main challenge was to design this device in such a way that it was able to scan and respond in both Verbal and Braille.
+Our entire team was working remote was a very different kind of challenge altogether.
+
+Accomplishments that we're proud of
+
+The device is something that we are proud of.We were able to implement this which would help
+tackle different challenges that people with disabilities face on a daily basis.
+The Verbal and Braille response is something which has a huge potential and we are immensely proud about doing something
+which would be able to help someone tackle different challenges.
+
+What we learned
+
+We have learned an un-quantifiable amount of knowledge about disabilities and indeed the problems that people with disabilities encounter.
+The Mental State of a person having disability is something which is spoken about very less was part of what we learned
+while researching and working on the product.
+
+What's next for Mello
+
+From here we hope that the app can be funded to bring some of the more conceptual features to life and therefore help to
+better the wellbeing of Visually Impaired people around the world. We want to make it as affordable as possible so that
+can be offered to as many people as possible around the world.

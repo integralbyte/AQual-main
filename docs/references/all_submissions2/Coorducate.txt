@@ -1,0 +1,27 @@
+Inspiration
+
+Lockdown has been taxing on every soul in some way or the other, but it has made me observe and have some revelations. We all have suffered from some setback emotionally, mentally or/and professionally. Among the issues that we talk about when discussing disabilities. a major topic is the effect mental health which is affected sometimes directly as a problem and sometimes as an after effect to some other form of disability.
+
+What it does
+
+As the name and the elevator pitch suggests, it helps you and your loved ones get access and pin point the problem while damage controlling through the right triggers.
+We have a triggering device that notifies the cloud when it detects unusual activity as per the user and sends it to the azure cloud which triggers notification or the assisstant as per the users customization.
+
+So imagine sitting on your desk and suddenly starting to spiraling into worst case scenario cascade, or that ADHD as a kid and right when things are about to become difficult to recover from, your happy place song plays or your favorite teacher comes in and checks in on you!
+That is how simple and yet effective the design and working is supposed to be!
+
+How we built it
+
+The design assumes the use of ESP32 microcontroller device, along with interrupt sensors like pressure sensors, rotary encoders, capacitive touch sensors to trigger the device and cloud functions. It also assumes the use of alexa/google assisstant to complete the task of notifying/playing your song/ enabling that web extention to help you take control and communicate with people who care about you!
+
+Challenges we ran into
+
+Not having access to the hardware, figuring out the exact flow was a little tedious.
+
+What we learned
+
+The communication protocols used by the controllers, the power calculations since the device is expected to be battery powered. Azure cloud capabilites that would support the design.
+
+What's next for Coorducate
+
+A proof-of-concept, followed by a simple mobile/web applicaiton to view the analytics.

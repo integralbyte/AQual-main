@@ -1,0 +1,27 @@
+Inspiration
+
+I was one of the first blind students in India to pursue math in high school and university. I had very limited support and always wished I had a mentor who could provide me guidance and support. This is why I launched a mentorship program as part of I-Stem to connect students and young professionals with disabilities with more experienced community members with and without disabilities. We have been running a mentorship program since 2019 and nearly 250 people with disabilities have received support from other professions with disabilities and people without disabilities from various corporate partners such as Microsoft, Morgan Stanley, Oracle, Intel among others.
+
+What it does
+
+As our mentorship program scales, we needed a way to match mentees with mentors while still providing an opportunity for a program administrator to verify and make changes to the automated matching since technology cannot account for all of the personal circumstances involved especially when considering the varied needs of people with disabilities. So, as part of this hackathon, we developed an AI-powered algorithm that accounts for objective preferences (e.g. location, disability, gender, skills, industry etc.) and subjective aspects (attributes extracted by the model from candidate's personal story and other free-form responses). Both of these are then used to make recommendations to the program administrator who can then accept or reject recommendations. This makes the matching process much more efficient.
+
+How we built it
+
+We used natural language processing combined with a bunch of heuristics informed by our experience working with people with disabilities over the past two years to build this system. The app uses the MERN stack.
+
+Challenges we ran into
+
+We wanted to make sure that the model was not biased and truly accounted for the diversity in the lived experiences of people with disabilities. So, we spent a lot of time validating the model, making improvements and iterating.
+
+Accomplishments that we're proud of
+
+We are very excited to have been able to develop this service and deploy it on our staging servers. We have also validated this against the matches that were made by our program administrators in the past, and the results are very encouraging.
+
+What we learned
+
+We learnt a lot about NLP and recommendation models.
+
+What's next for Semi-automating mentorship for people with disabilities
+
+We would like to integrate this with our mentorship program once we have validated it enough. We also want to open-source and provide this to other nonprofits working in the disability space who can also use it for their own mentorship programs.

@@ -1,0 +1,27 @@
+Inspiration
+
+I made ThisOrThat with the purpose to solve the problem of web accessibility through eye-tracking which is generally used in niche scenarios but should be more widespread. My inspiration behind this is people like Gabe Adams-Wheatly, who goes by the username no_limbs_ on Instagram, proving that anything is possible by sheer personal grit. Another such personality is Makeup Artist, Jessica Ruiz. In this digital age, where most millennials are using visual platforms like Instagram to socialize and connect remotely, why should the usage of these visuals be limited to a certain audience? This is the question that led me to build this interface which takes seconds to let you decide your Mood!
+
+What it does
+
+ThisOrThat is a fun eye-tracking software wherein, the user is just required to move the eyes to the left or right to change the current random picture displayed, which can belong to any kind of realistic domain be it food, weather, scenery, etc. It has a Tinder-Interface as you can simply remove the picture you don't like by literally, "Rolling your Eyes!". You can also choose to see your preview and the cursor movement to get the feel of the working by simply changing them to True in the javascript code!
+
+How I built it
+
+I built ThisOrThat using the library called WebGazer which is open-sourced and written in Javascript, hence the language I decided to code in. I used it to track the eye movements as it returned the location of the cursor in terms of x and y coordinates along with the timestamp and I trained it to cover almost the whole page of the website through the chrome developer tools. I then followed it up with the code to manage the delay time to 1 second, which is the duration for which the user is required to look at the screen in the left or right to move the image or center for leaving it static. However, the cursor, as well as the video preview, is hidden from the user which can be customized according to the user.
+
+Challenges we ran into
+
+The main challenge for me was to display the previous image while keeping it static as the images changed instead of displaying a, "image not found" message or not displaying the image at all, while fetching it from the Picsum site. I solved it by correcting my code multiple times and modifying match the delay time and changing the photos instantly according to the user's eye movement.
+
+Accomplishments that I'm proud of
+
+I chose to go for this solo project and just being able to complete it was awesome. It was as much fun to build as it is to use. I doubted it multiple times when the image was not fetched but it came out to be a great experience.
+
+What I learned
+
+Firstly, I learned to acknowledge the presence of specially-abled people remotely and contribute my bit as a Developer through a piece of code to make their life easier, even if it is by 0.1%, and will continue to be inclusive in these terms.
+
+What's next for ThisOrThat
+
+ThisOrThat has been left open-ended on purpose to realize this issue of inclusivity and solve it by embedding it on any public platform. However, I'm looking forward to converting it into a full-fledged app to solve a general but significant use case.

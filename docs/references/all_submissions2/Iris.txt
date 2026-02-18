@@ -1,0 +1,33 @@
+Inspiration
+
+After reading Vogue's Business 'Beauty Weak Spot: People with disabilities' and Allure's 'Blindness & Beauty, we realized that there is such a need to create an inclusive and accessible environment for all. Just thinking about how we struggle to find the right shade products online, we all realized that this challenge is magnified tenfold for those that are visually impaired. Iris levels the playing field and allows all shoppers regardless of their physical impairments to get access to a personalized beautician in the palm of their hand.
+
+What it does
+
+First we created a fully accessible website for Iris, with React, html, and css interacting with a django backend python server via REST API endpoints. This website includes alt text, a contrast ratio above 7:1, easy to read font, and no pop ups to confuse a screen reader.
+
+You can start your journey here by finding makeup that fits your skin tone. If you have any trouble identifying what makeup fits you, Iris has a face recognition computer vision model which interfaces with a color segmentation model to identify your skin tone and hair color. After collecting this information, Iris gives you a full list of makeup recommendations that personally fit you and then you can simply add the products to your cart and check out.
+
+After you order your products, you can use Iris every morning to get ready. You can either view saved products like shown below or simply scan a product. Iris uses a deep convolutional neural network to scan and identify products that you have in your hand. This comes in handy for bottles that feel similar, trying to see different shades of lipstick, or differentiating between highlighter, blush, and bronzer containers. After Iris identifies your product, she reads out what the product is used for, how to apply it, and even adds in a few fun makeup tricks related to that product.
+
+For anyone who would rather talk through the process instead of navigating the webpage, all of these functionalities can be completed through Iris’s AI text to speech chatbot.
+
+How we built it
+
+First we created a fully accessible website for Iris, with React, html, and css interacting with a django backend python server via REST API endpoints. We also built a face recognition computer vision model which interfaces with a color segmentation model to identify your skin tone and hair color and
+
+Challenges we ran into
+
+We ran into issues fine tuning the skin tone model and having to gather various points of data. We also struggled with getting the AI chatbot to be responsive to various command and then be able to convert text to speech. We also struggled deploying into Azure for the first time.
+
+Accomplishments that we're proud of
+
+We were able to develop a product that fully transforms the at home beauty experience for not just the disabled community, but for everyone. We were able to think in a new way to create a dully accessible environment. We were able to integrate various technologies and also a variety of skill sets across the team.
+
+What we learned
+
+We learned that accessible engineering should be prioritized and the center of a design rather than a later thought. We learned that creating a fully accessible experience removes pain points for everyone and can create a better and more convenient experience for all and a deep convolutional neural network to scan and identify products that you have in your hand. Lastly, we developed an AI chatbot to be able to guide everyone through a personalized experience.
+
+What's next for Iris
+
+We hope to improve model accuracy for both scanning skin tone and products under various conditions and be able to interface this as a tool within the Estee Lauder sales website to be able to closely intertwine the experience and enhance personalization.

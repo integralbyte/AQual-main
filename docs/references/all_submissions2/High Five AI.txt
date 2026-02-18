@@ -1,0 +1,50 @@
+Inspiration
+
+Hackathon goal was to develop accessible and inclusive solutions to help tackle challenges that people with disabilities face on a daily basis. We were inspired by Helen Keller who was an American author, disability rights advocate, and lecturer. She had an illness as a baby which left her blind and deaf. Despite her disabilities she attended Harvard College and became the first blind-deaf person to earn a Bachelors of Arts degree. She famously said "Blindness cut me off from things and deafness from people." As allies what can we do to lend a helping hand to those who are deaf, blind, and mute like Helen Keller?
+
+What it does
+
+Our team High Five AI came up with an artificial intelligence powered communication platform for the deaf, blind, and mute. How does a deaf blind or mute person communicate? Over 15% of the world's population that's 1 billion people experience some form of disability like vision, mobile, or auditory. They are a vulnerable group concerning mental health due to their sensory impairments in orientation, mobility, access to information and communication they often suffer from a lack of interpersonal relationships and accessibility. We wanted to develop an inclusive an accessible solution to make the Internet a place for everyone to connect.
+
+The solution is High Five AI our team is working on an accessibility solution with machine learning algorithms to reduce the barriers to communication - as if you have five allies supporting you. There are five main features of High Five AI:
+
+Computer vision image recognition
+
+Text to speech with multiple languages
+
+Speech to text
+
+Braille translation
+
+ASL sign language
+
+Try the app itself at: https://lucylow.com/High_Five/
+Code is open sourced and available on Github: https://github.com/lucylow/High_Five
+
+Challenges we ran into
+
+Integrating the visual and audio features to run in parallel
+
+Debugging the UI/UX of the scrolling braille
+
+Language translations
+
+Accomplishments that we're proud of
+
+Everything works on one page!
+
+What we learned
+
+Computer Vision algorithms
+
+Speech to text and text to speech
+
+Web Speech API for Multilingual Translations
+
+What's next for High Five AI
+
+Extend this from web to a mobile app
+
+Computer vison needs better training data (thinks a piece of paper == fridge)
+
+High Five AI is dedicated to my friend Andy who is deaf.

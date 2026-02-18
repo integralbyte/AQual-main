@@ -1,0 +1,33 @@
+Inspiration
+
+There are about 34 million children in the world who are impaired in hearing. After speaking to multiple individuals who interact with people who have disabling hearing loss, I found out that there's a huge problem in deaf education, specifically, there's a communication gap between teachers and students with impaired hearing in schools.
+
+With this information in hand, I set about devising a solution to bridge that communication gap
+
+What it does
+
+Echosign is a web app, that leverages Amazon's Speech-To-Text service, "AWS Transcribe", to provide real-time transcriptions during lectures. The words are also then converted to sign language giving students the option of following along with what suits them
+
+How we built it
+
+Following the example blog post provided by AWS that described how to implement the speech transcription service on a front-end web application, I reworked this to work as a backend nodejs service.
+
+I searched online for a repository for sign-language hand signs to map the words transcribed to sign language.
+
+The front end and backend services are served from a server with an NGINX proxy server
+
+Challenges we ran into
+
+The AWS SDK doesn't have an implementation for sending web socket stream data to the transcription service. Due to this, I had to go about a roundabout method of sourcing the IAM credentials to make a secured call to the transcription endpoint
+
+Finding an efficient way of sending the audio packets via WebSocket from the front-end app to the back end service and then unto the transcription service and back again
+
+Accomplishments that we're proud of
+
+Implemented a method of loading environment variables from an S3 bucket using the AWS SDK
+
+Learning more about WebSockets and finding a way to forward WebSocket requests to another service
+
+What's next for EchoSign
+
+Work on the Sign Language functionality to be an avatar properly using sign language

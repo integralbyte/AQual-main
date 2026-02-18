@@ -1,0 +1,81 @@
+Inspiration
+
+One in seven people in the world today are estimated to live with some form of disability. This global estimate for disability is on the rise due to population, ageing and the rapid spread of chronic diseases, as well as improvements in the methodologies used to measure disability. Average survival time for a person after the diagnosis of fatal neuromuscular diseases is 2-5 years. Personally in my team, we have close relatives who are mobility impaired. We see and understand their difficulty in a day to day basis. This influences the patient’s employment condition. Such an instance is found in developing countries. It impacts the patient’s mental health and affects how they function in the society. Hence, we have Mobi-Guide
+
+Features (What it does)
+
+Features of the robot
+
+Assistive Technology
+
+Home Automation
+
+Home Security
+
+Errand aid
+
+Remote on/off
+
+Shortest Path Finding
+
+Path Following
+
+Collision avoidance
+
+Personal assistant
+
+Terrain Mapping
+
+Features of the wellness device
+
+Body Temperature sensing
+
+Bluetooth and Wifi connection
+
+Cloud connectivity
+
+Obstacle detection and collision avoidance
+
+Pulse sensing and maintaining records
+
+Glucose level monitoring
+
+Notifying the neighbor/ caregiver/doctor
+
+Call the ambulance in case emergency
+
+Tools Used (How we built it)
+
+Raspberry Pi
+
+Arduino
+
+Sensors( Pulse/ Gas/ Fire/Ultrasonic/ Temperature/ Flame/ Glucometer/ Piezo)
+
+Modules (GPS/ Bluetooth/ Wi-Fi/ Rfid)
+
+camera
+
+Challenges we ran into
+
+The difficulty in accumulating the hardware components within a short period of time was a tough job. Doing a survey with a few people and coming up with an innovative idea for the disabled was difficult within the stipulated time. Integrating multiple components and synchronizing the final output was a tedious task.
+
+Accomplishments that we're proud of
+
+Being able to come up with a real-life solution for an incident that personally affected me and my family, is itself a huge achievement, as MOBI-GUIDE would be able to stand by people who are differently-abled and not make society look upon them with sympathy. Our idea has the capacity to stand by those who need physical help and helps them feel independent. We believe, self-help is the best help and so coming up with a technology which can assist people to look after themselves is what we accomplished.
+
+What we learned
+
+Arduino Coding
+
+Module Interfacing
+
+Hardware Integration
+
+Sensor Calibration
+
+Developing solutions for real world problems
+
+What's next for Mobi-Guide
+
+Launching this into the market with added features such as automatic ambulance booking when the person faints/the heath vitals are out of the range. Future work also includes developing a fully-fledged mobile application that will connect them to people who can support them mentally and look after their mental health. We would reach out to the ones in need and make them feel wanted!

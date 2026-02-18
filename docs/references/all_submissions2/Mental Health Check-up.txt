@@ -1,0 +1,26 @@
+Inspiration I was really excited about ELC Hackathon. Last time also I took part in this but was not able to do much as it was my first time. Looking forward to give something good and worthy this time...
+
+What it does
+
+About
+Its a small game on Mental Health. We have to play the game and scores would keep getting added. The scores would tell how your mental health condition is. If the score is 8 or more, then you are absolutely fine, if 4-8 then you are okay with little worries, if less than 4, then it means your mental health is not very good.
+
+How we built it
+
+I built it alone using HTML,CSS, Bootstrap and Javascript
+
+Challenges we ran into
+
+I was working alone so it took me lot of time to do everything.
+
+Accomplishments that we're proud of
+
+I am happy that I did whatever I could. I think this small game of mine would be quite useful to many.
+
+What we learned
+
+Lot about how others work and what else I could have done.
+
+What's next for Mental Health Check-up
+
+To make a better game with more accuracy and much more other options like adding help option where people can get small tips to improve it.
