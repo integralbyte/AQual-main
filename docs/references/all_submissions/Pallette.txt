@@ -1,0 +1,213 @@
+Introducing Pallette - The Tongue Interface
+
+We envision a tongue interface capable of controlling technology to enable more independent living. Currently quadriplegics do not have a mobile, discreet method of finely controlling the technology used in their daily lives. The tongue is one of the most sensitive and versatile muscles in the body, it is also concealed within the mouth. Though previous attempts of using the tongue as an interface for technology exist, none of them have succeeded in achieving a comfortable and lasting experience for the users while enabling control of multiple technologies.
+
+Specifically for our project we have created Pallette, a tongue-controlled wireless device that fits in the mouth of the user and connects to a mobile phone through an app that we have developed. This app will act as hub to which other devices can connect to via bluetooth, allowing the user to select which device to control via Pallette.
+
+The current version of Pallette has been designed behind the idea of a computer mouse: a trackpoint which allows navigation and direction and 2 buttons that can be clicked to indicate commands. It can then be connected to any device compatible with Blueetooth technology through the mobile app. These devices will each have their own configuration as to how to interpret the signals from the trackpoint and buttons in order to perform different actions.
+
+By achieving a strong tongue interface we can extrapolate control to multiple devices including motorized wheelchair control, video games, thermostats, lighting, and so much more. Specifically, the increased interconnectivity expected to take place with the smart homes of the future and the trend of Internet of Things will bring about more connectivity between physical and digital world. Pallette taps into this and provides quadriplegics with access to all of these devices.
+
+Although the possibilities of Pallette are endless, we want to submit it to the mobility solutions category.
+
+Please take a look at our website: http://web.pallette.us
+
+Our proposed solution
+
+Wireless prototype and mobile app
+
+We have developed a functioning prototype that showcases our vision for what Pallette can be:
+
+At its core, it is made of an Arduino Blend Micro board which sends bluetooth signals based on button clicks or joystick movement to the mobile app.
+
+The board, buttons and joystick have been assembled together and encapsulated in a 3D printed cover that provides the form of the device. It has been designed taking comfort and long term use into account.
+
+The mobile app which Pallette connects to acts as hub for many different devices to interface with it. The only requirement is for them to have Bluetooth access and to be configured to interpret the signals from the app.
+
+The total cost of creating the current Pallette prototype was less than $50.
+
+The new Pallette!
+
+The new mobile app!
+
+Previous version from AT&T and NYU Connect Ability Hackathon
+
+We originally developed an initial, functioning wired protoype that was developed and presented during AT&T and NYU Connect Ability Hackathon:
+
+This prototype possessed the functions of a mouse, except that instead of operating it with hands and limbs it sat on the roof of the mouth and was operated with the tongue. The design incorporated different elements:
+
+Two clickable buttons which were mounted as large-area buttons on the left and right sides of the interface. The size and texture of the button clicks were made tactile through lever motion of plastic and wide button caps.
+
+A pressure-sensitive trackpoint nub which was mounted in between the buttons. This pressure sensitive nub could be pushed in all directions with a continuous spectrum of movement spanning a 2-D plane. (For reference, this “trackpoint nub” is the same as the red blip mouse found on most IBM thinkpad laptops). This nub controls a mouse cursor. The trackpoint tip is concave, enabling the tip of the tongue to grip and better direct the cursor.
+
+A mouthguard to hold everything together and fit inside the mouth of the user.
+
+Improvements made from previous version
+
+While everyone thought the idea had enormous potential and the prototype was impressive, we received important feedback which we have been working on to make the idea even better:
+
+Our project lacked a strong software component. Since then, we developed a mobile app from the ground up with which Pallette connects in order to send different signals to other devices. As explained in the previous section, other devices will connect to the app to receive the signals from Pallette and perform corresponding actions.
+
+Secondly, as seen in the pictures, this initial prototype was wired. This implies certain limitations for the user, including comfort and ability to speak. Because of this, we made Pallette a wireless device which connects to the mobile app via Bluetooth, allowing the user to completely close his mouth with the device discreetly inside.
+
+This brings us to our third improvement: the design of form. In order to make Pallette a device that can be used extensively throughout the day, it has to be comfortable enough and allow the user to speak without much effort. To achieve this, we have completely redesigned the idea of the mouthguard, which is no longer necessary. As of now the attachment scheme is to use dental floss to weave between the middle to back teeth to hold the device in place and enable smiling. It would take a bit more effort to get on, and the loop sizing would have to be adjusted to fit the person's mouth, but easier than getting custom retainers and reduces the bulk.
+
+What's next?
+
+Although we have made incredible progress in very little time, there is still a lot of work ahead. Our next step for the short-term future is designing and implementing Pallette's API.
+
+With the Pallette API the developer community can incorporate Pallette interaction into their software and hardware. Making their devices and applications Pallette compatible means making them quadriplegic accessible!
+
+Developing Pallette's API for universal access
+
+After finishing the final touches of the Pallette device and app, we will begin the development of Pallette's API. Through this API, any device with Bluetooth technology will be able to connect to the mobile app, and therefore, Pallette. All these devices will need are ways to interpret the signal from Pallette and decide what action to execute.
+
+Our initial idea is to connect Pallette to a wheelchair via Bluetooth and allow the user to move it with his Tongue. After this, we will consider many other possibilities to help make the lives of quadriplegics more independent.
+
+Design Process
+
+The results achieved so far wouldn't have been possible without the extensive iteration process, user feedback gathering, and protype testing we have followed since the begnning of the project in January.
+
+Information Gathering and User Interviews
+
+In the first place we wanted to understand quadriplegia and the problems it creates in day to day tasks. Therefore we did extensive reasearch of quadripelgia at great scale to get the big picture of the problem. However, this kind of research did not help us understand what it really felt like to be a quadriplegic. We then understood that user interviews were absolutely necessary.
+
+One of the early challenges of our proposed project is the fact that finding people with spinal cord injury to interview is not easy. We explored multiple channels for interviews: longer term medical channels through professors with an interest in medical technology, and more immediate channels though the Christopher Reeves Foundation and its community.
+
+We spoke with a representative of the Christopher Reeves Foundation who was very helpful in finding people to interview. She provided us with a list of different communities we could reach out to, including their own forum, a SCI patients email list, and other online sites. After contacting members of these communities we received wonderful feedback that helped shape what Pallette has become. Please find detailed interview information on the User Feedback Forms provided separately.
+
+Sketching the initial solution
+
+We came up with 3 different sketches of what our final result could be based on, taking into account the insight provided by the people we interviewed.
+
+Sketch 1 - Joystick / Ball pad with buttons
+
+The idea in this case is using a mouth mold that can be inserted and removed easily from the person’s mouth, allowing the user to use the joystick to select different options:
+
+Sketch 2 - Touch pad with buttons
+
+Our second idea was the use of a trackpad instead of a joystick, with different buttons depending on the location of the pleader the user decides to touch.
+
+Sketch 3 - EMG Interface
+
+In this case we pivoted a little from the original tongue interface, using EMG technology to sense the muscles near the throat based on tongue movement. This way, depending on the muscle that is moved, different actions can be performed. This would allow the user to be able to eat while wearing the device, and allows for a simple, nice looking design.
+
+Heuristic Evaluation with Low-Fi Prototypes
+
+To prototype our tongue-controlled interface, we created two sets of prototypes; one set to asses the haptic function of button pressing using a modified calculator, and another to asses the form of the interface inside the mouth. Both prototype sets were meant to rest against the top of the mouth and interfaced by the tongue from below. We iterated different times over these protoypes based on feedback from users (detailed below).
+
+Prototype 1 - Calculator
+
+A cheap $4 calculator was used to test the ability of users to perform operations with their tongue. The idea behind it was to ask users to press different buttons and see based on the results of the scree if their input was correct. This would give us an idea of how easy it is to control a button set inside the mouth.
+
+Version 1 was constructed from a full portable calculator. The prototype was wrapped in plastic, with the button portion being placed in the person’s mouth. The designer asked the person to press certain buttons or perform certain operations and the person attempted to do so. Participants complained about the large size; some people could barely fit the keypad into their mouth. Furthermore while the buttons were easy to push by hand, they were difficult to push by the tongue. Buttons towards the back of the keypad were hardest to push, as participants found it difficult to reach towards the back of their mouth. Buttons were easiest to press in immediate circumference around the center of the keypad.
+
+Version 2 attempted to address these concerns by reducing the size of the keypad and reducing tactile load required to press the buttons. The the keypad was folded and clamped with tape, and the buttons were replaced with conductive metal slats. These slats enabled a button press with a gentle tap of the tongue.
+
+Prototype 2 - Polyester Forms
+
+The stuffs prototypes were used to address the sensation of a user having something in his mouth designed to be used for longer periods of time. This would give us an initial impression of what it might feel like to use our tongue- interface technology.
+
+It also gave us, the designers, an impression of how complicated it might be to fit the buttons to be handled by the user within the constraints of the shape of the mouth without being uncomfortable.
+
+Version 1 attempted to create a thin, less defined form as a staring base to understand how big we could make the form within the confines of the mouth. This first guess proved to be too big to reasonably fit in the mouth. When used it looked like a blue tongue sticking out of the mouth.
+
+Version 2 reduced the size and profile of version 1 according to one of our participants feelings on sizing. After an initial trial, the form was curved to better fit the curvature of the mouth. This form fit with adequate space, and the participant felt like they were able to comfortably reach the majority of exposed real estate. The two most prominent complaints were:
+
+The prototype was not attached to the top of the mouth and would sometimes float around
+
+It did not include an identifiable buttons and therefore left the interface mapping up to the imagination.
+
+Using the form factor of version 2, version 3 was created with a button and control layout. Participants agreed that buttons were then recognizable by the tongue quite well despite their small size, and that some of this interface should be streamlined with less number of elements and more distinct elements to individual touch.
+
+Med-Fi Prototype
+
+Based on the users’ feedback during the previous prototype versions, we kept testing different materials to get a better understanding of what might be comfortable for the user. In that sense, we tried materials that varied from chocolate and cheese to plastic and foam. This helped us understand different textures that might be familiar for the user when using our product. We then proceeded to address the problem of operating with our previous prototype that used a calculator screen to indicate success of operations. This time around we built a more robust prototype that:
+
+Had a shape that allowed for easy insertion in the mouth.
+
+Was able to perform the operations of turning lights on and off with 2 different buttons.
+
+The tools used for building our prototype consisted of:
+
+An Arduino board (to make all the connections to the buttons and the lights and program it so that on a button push the lights would turn on)
+
+LED Lights
+
+Pushable buttons (that would activate the LED lights)
+
+Plastic which would cover the buttons and work as our form to be put inside the mouth
+
+The shape of the plastic cover was modified through heat. Tape was sued to keep everything together, cables were used to connect the buttons to LEDs, and plastic bags were used to allow for multiple uses of our prototypes by different people.
+
+Previous versions of the material used in our prototype included stuffs, which were helpful to address what the shape of the device should be, but the feeling was not very much liked during the heuristic evaluation. Because of this, we decided to then go with plastic, which has so far been very successful.
+
+Hi-Fi Prototype
+
+After the previous iterations, we finally got to our Hi-Fi prototype. This prototype acts as an interface as in the form of mouse to a computer and is encased in a vacuum formed housing that sits in the concave dome behind the teeth of the upper jaw. Mouse interfacing was achieved through the rewiring of mouse components. The interface is exposed to the tongue as two buttons - “Left” and “Right”. These two buttons take up the entirety of the exposed interface to aid in control by the tongue.
+
+With this prototype we seeked to test users’ control and comfort through a sequence of computer interfacing tasks. In designing a tongue interface we wanted to make sure that the device comfortably fits in the user’s mouth and the users have fine enough control to achieve their desired tasks without frustration.
+
+User tests
+
+We then proceeded to test the protoype in the real world based on 3 tasks of varying motor difficulty users would need to perform.
+
+The first simple task consisted of giving a screen which randomly indicates what button to press and the user pressing those buttons. A counter of the right and wrong inputs is then recorded. This task allowed to test comfort and control.
+
+The second moderate task consisted of giving a users a pdf document of several pages long, and having them scroll up and down by clicking on the buttons. The rationale behind this task was to gain a qualitative impression of the feeling of the device in a common task users al already used to doing in another way. The scrolling of documents was very simple for us to do, since all that was need was to map the up and down arrow keys to the left and right clicks. After performing the task, users were asked for a general impression of the task, if they found any difficulties, if they felt in control all the time, and if they had any other feedback to provide.
+
+The third complex task consisted of the user playing a video game using only the tongue-interface. The rationale behind this task was to gain a better understanding of the amount of control a user can have when using the tongue interface in complex, dynamic environments. Because of this, users were asked to play a simple video game which only required them to click every time they wanted a block to jump and evade obstacles. We measure the score of the game session as the quantitive variable. Users were asked to play the video game 3 times, and the highest and lowest scores were recorded.
+
+After running the tasks with the different participants of our study, we arrived to the conclusion that the tasks performed were all quite simple for users to do. This gave us great insight into understanding what we were doing right and wrong. Please look at the User Feedback Form for more details about the tests.
+
+Based on the results received, we were then ready to take our prototype to the next level by incorporating a joystick-like functionality in order to actually be able to move the mouse around. This would give us an even better impression of the tasks that the final users were expected to perform. Moreover, the use of plastic bags to cover the prototype was well- received among users, meaning that in future scenarios we would continue using it.
+
+Fully functioning prototype for AT&T and NYU Connect Ability Hackathon
+
+After all the lessons learned, we decided it was time to incorporate the mouse controlling functionality into our device. Based on the feedback we received from the previous high fidelity prototype we added the trackpoint for more fine control and incorporated all elements into a fixed mouthguard retainer. This addressed two major concerns of not having the device fixed in place and not being able to discern the left and right side. The presence of the trackpoint further provides subtle intuition of the divide from left to right.
+
+Additionally, the tactile feel of the buttons significantly improved over past versions; the new version incorporated the mechanics of a keyboard in order to increase the accuracy of button presses. Finally we designed the wire coming out the side of the apparatus and bundled it in a thin beige tube to be more subtle.
+
+In order to do add the trackpoint, we used ripped out several old IBM laptops to take the trackpoint from their keyboards. These trackpoints were attached to small boards that allowed us to connect the trackpoint to an Arduino Micro.
+
+After being able to move the cursor of the mouse with the TrackPoint connected to the Arduino and adding 2 buttons that would act as a left and right click, it was time incorporate it into the device. In order to do this, we bought a $13 mouthguard that would help fit the device into the mouth and built a small form to house the trackpoint and the buttons. It is worth noting that to determine the right size of the device, we used a mouth mold.
+
+The last step consisted on adding plastic covers to the device buttons, and it was ready go!
+
+This final prototype possesses the functions of a mouse, except that instead of operating it with hands and limbs it sits on the roof of the mouth and is operated with the tongue. The design incorporates three elements. Two clickable buttons are mounted as large-area buttons on the left and right sides of the interface, and a pressure-sensitive trackpoint nub is mounted in between. The pressure sensitive nub can be pushed in all directions with a continuous spectrum of movement spanning a 2-D plane. (For reference, this “trackpoint nub” is the same as the red blip mouse found on most IBM thinkpad laptops). This nub controls a mouse cursor. The size and texture of the button clicks have been made tactile through lever motion of plastic and wide button caps. The trackpoint tip is concave, enabling the tip of the tongue to grip and better direct the cursor.
+
+We also incorporated trackpoint sensitivity sensitivity within the source code allowing us to easily increase or decrease the sensitivity as desired. In fact, we can even scale sensitivity for a specific axis, X or Y. We found this helped greatly given the strength and precision of a tongue differs from person to person. Also the agility of the tongue is different from left to right contrasted with front to back.
+
+Building a wireless version of Pallette
+
+We finally got to the point in which we were confident enough about our design to take it to the next level.
+
+Sketching Pallette 2.0
+
+Based on the feedback received during the AT&T and NYU Connect Ability Hackathon, we knew that comfort had to be a first priority. Because of this, we sketched a new version of the form and decided to move away from the idea of using a mouthguard to hold everything together, and opted for using dental floss attached to the improved form for fitting the device into the user's mouth.
+
+Using Arduino Blend Micro to make it wireless
+
+We also understood how important it was to make the device wireless. In order to do this, we purchased an Arduino Blend Micro board which comes with a Bluetooth transmiter to send the signals from the buttons and joystick. We connected everything together and made sure the Bluetooth signal was working.
+
+Developing the mobile app
+
+Before printing the 3D model of the device and assembing everything together, we developed a rough version of the mobile app which will act as a hub for other devices to interact with Pallette.
+
+The idea is very simple: the user connects Pallette and all the devices he wishes to control to the mobile app. He then selects what device to control with the app pre-detemrined tongue gestures (this is a work in progress) or by tapping on the screen. The app shows the device selected and the actions it has available. When the user taps a button or moves the joystick in his Pallette device, the corresponding action is executed by the active device. For now, the app does not connect to any external devices, but that is the next step!
+
+After getting the UI right, we designed the colors and different default actions we would like to propose the user. In future versions of the app, users will be able to customize the devices they wish to interact with.
+
+Updating 3D sketch
+
+We then decided to go for the colors presented, and updated our 3D sketch to match it.
+
+Assembling everything together
+
+We printed an initial version of the form we wanted to use, and although adjustments will have to be made, for the purpose of testing and as a first functioning wireless prototype it was more than enough. The beauty of 3D printing is that we can always adjust for that and even customize based on each person’s mouth.
+
+We proceeded to assemble everything together:
+
+Finally, Introducing Pallette 2.0!
+
+While the size was larger than we expected (it still fits in a person's mouth), we now need to reduce it and add dental floss to hold it inside the mouth and run further tests. That, combined with our idea of a universal interface, are the next steps.

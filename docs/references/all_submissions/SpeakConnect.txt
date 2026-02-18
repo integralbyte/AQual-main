@@ -1,0 +1,14 @@
+Connecting People
+Using voice messages, SpeakConnect is truly a fast alternative to send messages. You can communicate as you would on any instant message app, but with enhanced navigation for everyone.
+
+Navigation
+SpeakConnect shows a new way of using software. Navigating around the app is really simple because it allows touch and external controls. Any device that can be used to control music on an iPhone (play, forward, pause) can be used to control the app and send messages. This means you can use headphones, Bluetooth controls or anything that has buttons to navigate around the app. It leverages devices that already exist to show a new way of interacting. And, instead of buying a $500 accessibility system you can use a $5 pair of headphones.
+
+Hands-Free
+Three of the four videos on the challenge asked for a handsfree app.
+
+Xian can send messages and communicate with her students by attaching a control to her poles. This allows her to interact with software while walking and doing other things. It is also faster than using her hands to type a message to connect with anyone.
+Gus Gus can send messages using the control and with the iPhone locked because the app narrates everything that is highlighted. HE can communicate in a faster way. It is also great that he could use this control based interactions with software to navigate in the future, just by using his headphones.
+Jason Could use Bluetooth controls to use his cameras and expand his communication and creativity.
+
+Ideas and Feedback Xian's video gave me the idea of using a control that can be attached to her poles that would allow her to connect with other people while walking. Gus's video gave me the idea to integrate voice accessibility to be able to use the app without ever having to use the screen. Feedback from testers gave me the idea of integrating bluetooth controllers.

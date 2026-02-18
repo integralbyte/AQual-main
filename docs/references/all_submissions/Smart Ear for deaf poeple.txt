@@ -1,0 +1,17 @@
+Braci has developed a solution which is capable of detecting a wide range of sounds (both indoor and outdoor) such as smoke alarms, doorbells, babies crying, car horns and more. These sounds are then pushed as easily understood notifications through a smart device and vibration bracelet.
+
+Elevator Pitch:
+
+Unique algorithm for smartphones, which detects a wide range of sounds such as smoke alarms, doorbells, baby crying, car horns and more. The App is connected with the Pebble Watch and Android Wear to get better alerts.
+
+Product/Service description:
+
+Braci contains of two main parts: The software, which is on smartphone, and the wearable device (Pebble Watch & Android Wear). The core part is the algorithm on smart phone which listens and recognizes the sounds in the environment. The Braci App comes with 1000 pre-installed sounds of emergencies and thus allows deaf people to live safer and easier.
+
+How it works:
+
+The smart algorithm uses the mobile device’ microphone to detect and recognize the sounds. All sounds are saved and analyzed inside the mobile device (can also be done in offline mode), which means that the app doesn’t have to be connected to the internet. Once the sounds are detected, Braci will alert the user by different method; triggering the vibration, flash-light, on-screen event, and it will also send notifications to Pebble Watch.
+
+Fun fact:
+
+Braci started with funny story. Anwar Almojarkesh the CEO & Founder of Braci was facing a lot of difficulties, when having to wake up for his morning classes at the university. This was partly due to Anwar not being able to hear the alarm clock in the morning. He missed a lot of early classes, which evidently made him quit these classes after a certain amount of absence.

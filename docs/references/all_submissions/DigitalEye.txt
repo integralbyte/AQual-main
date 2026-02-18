@@ -1,0 +1,7 @@
+Over 285 million people are estimated to be visually impaired worldwide: 39 million are blind and 246 have low vision, according to WHO 2014. They can hear things but don't see them. People want to know what's happening around them and we're here to help...Let 'DigitalEye' be your eye!
+
+'DigitalEye' is an android app using image recognition technology to convert image into text and audio so you can 'hear' what's going on around you. It is simple and easy, just like using camera on your phone.
+
+We'll show you a demo video on how the app works. We're very excited on the potential how 'DigitalEye' can benefit the blind community and continue to improve its performance and accuracy.
+
+Image recognition and conversion is just the beginning...ultimately, we want to live stream video so 'DigitalEye' can tell you what's happening around you in real time and truly be your eye!

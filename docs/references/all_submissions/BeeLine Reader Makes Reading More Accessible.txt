@@ -1,0 +1,77 @@
+Reading Ability Is Critical
+
+In the age of email, texting, and social networks, the ability to read is of paramount importance. Even phones—once used exclusively for verbal communication—are now increasingly devices for textual communication.
+
+This shift toward text allows skilled readers to make efficient use of their downtime (while waiting in line or for an appointment). But our increased dependence on text tends to increase inequality for those with print disabilities.
+
+Reading on mobile devices is particularly difficult for many types of impaired readers, including those with palsy (whose hands shake when holding a smartphone or tablet), vision impaired readers (whose eyes strain to read a lilliputian smartphone screen), and attention deficits (who are constantly bombarded by on-screen notifications while reading).
+
+Our solution increases text accessibility for all of these groups. We do this by displaying text with eye-guiding color gradients instead of plain black text. These color gradients provide several benefits for different types of readers. Our solution works on any text-based PDF documents, which is one of the most common document formats. To use our PDF Plugin, a user simply clicks on a link to a PDF and it will automatically display with our color gradients. For PDFs that are already downloaded, the user can drag and drop the PDF into a Chrome window and our plugin will open the PDF by default. PDFs can be exported for later reading on other devices.
+
+Vision Impairments
+
+BeeLine Reader's color gradients are helpful for readers with many kinds of vision impairments, including:
+
+binocular vision problems
+
+peripheral vision problems
+
+low vision and
+
+field vision loss due to traumatic brain injury
+
+PDFs are especially problematic for readers with vision impairments because it is impossible to increase the text size within a PDF. Readers complain that zooming in on a PDF is an insufficient solution because it magnifies the entire document and makes line transitions burdensome because of the lateral distance their eyes must traverse (20 inches or more on a large monitor). Zooming is also an insufficient solution because mobile devices are not large enough to display an entire PDF at once, so the user ends up having to swipe left and right while reading along a zoomed-in line. Our PDF tool increases tracking ease both as the reader moves his eyes across a line and as he transitions between lines. This mitigates the need to zoom while providing a more effective accessibility solution for many vision-impaired readers.
+
+BeeLine's text display method has been tested by optometrists and been proven highly effective in testing with eye-tracking equipment. In fact, the New Technology Committee of the American Optometric Association has featured BeeLine Reader because of it's potential to make reading easier for readers with many types of vision differences.
+
+Vision Impaired Quotes
+
+As someone with sight difficulties, this is amazing: I wish all books were like this.
+
+This is beautiful. my vision disability is groaning in agony as it faces another reading aid.
+
+This is so nice, especially with my failing vision.
+
+I have never gone a day without a headache from reading on the computer until I started using BeeLine. Thank you!!!
+
+Dyslexia
+
+Line-skipping is one of the most common complaints among readers with dyslexia. Line-skipping interrupts the reader's train of thought and hinders reading fluency and comprehension. Because BeeLine Reader dramatically reduces the likelihood of line-skipping, dyslexic readers are some of our biggest fans. BeeLine Reader's technology has been integrated by one of the leading dyslexia content platforms and will soon be available to hundreds of thousands of dyslexic readers. Multiple dyslexia organizations have evaluated BeeLine Reader and found it to be helpful for dyslexic readers, and one study found that BeeLine Reader's color gradients improve reading fluency for about 80% of dyslexic readers.
+
+Dyslexia Quotes
+
+It feels like the first time I tried glasses. It completely removes any chances of me missing a line. I have a low dyslexia and this just works. Thank you!!
+
+Do you have any idea how helpful this is for dyslexia? OMG I can follow this text! The words and lines are not blurring together! I can READ!
+
+As someone who has struggled with language for my whole life, I will never be able to fully express my appreciation for this software.
+
+All of a sudden my dyslexia is gone.
+
+Attention Deficits
+
+Readers with attention deficits find it difficult to read for long periods of time. The inability to sustain focus while reading results in poor comprehension. Our color gradient solution significantly increases focus for readers with attention deficits. Readers describe the color gradients as pulling them through the text and enabling them to maintain focus much more easily. Our tools have been touted by leading ADD/ADHD authors and blogs for their effectiveness. Special education teachers use our tools with easily-distracted students.
+
+Our PDF tool is especially helpful for ADD/ADHD workers who need to read memos or research papers as a part of their job. The inability to focus can present a substantial impediment to successful career advancement in many fields where sustained reading is a job requirement, and our PDF tool enables ADD/ADHD readers to meet these goals.
+
+Attention Deficit Quotes
+
+This was the first time I have ever read a paragraph uninterrupted.
+
+I just tried this out and found it incredibly useful in its subtlety.
+
+As someone with a strong case of ADD, your product has already helped me toward one of my reading goals that I have been putting off for months because it was such a long piece. I read 8 chapters of it in one sitting. Thank you for choosing to help people in this way.
+
+Text is no longer frightening, my body doesn’t tense up at the sight of a long text, it’s manageable, even friendly. This idea is so simple and yet has such a profound effect.
+
+Autism
+
+Individuals with autism struggle with communication, both because of difficulty taking in information and difficulty expressing their feelings and opinions in response. BeeLine Reader helps with the intake of information for some readers with autism. One of the reasons that our tool is so useful for autism is that we allow users to choose their desired color scheme, which allows for infinite customization. Autistic individuals often have strong opinions about colors, smells, and sounds, so being able to customize their BeeLine Reader color schemes ensures that each reader will be able to use the scheme that is most effective for him.
+
+User Input
+
+We designed our solution based on extensive user feedback from a diverse group of individuals. They asked for a PDF viewer because PDF is such a widely-used format, and because it does not have reflowable text and therefore is less accessible. They also wanted a one-click solution that wouldn't require yet another software program to open each time they wanted to read a PDF. Lastly, they told us how important it was for our tool to work in conjunction with text to speech, and how important it is for us to communicate this feature to the users. We are grateful for the many bits of feedback (and thanks) that we received from our users over the last few months.
+
+BeeLine Reader: A Wide-Ranging Accessibility Solution for Digital Reading
+
+One of the most remarkable things about BeeLine Reader's technology is the breadth of its accessibility benefits. Very few tools provide significant benefits to individuals with such a wide range of cognitive, visual, and physical differences. We are proud to have developed a tool that improves the lives of so many readers.

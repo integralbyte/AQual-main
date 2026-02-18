@@ -1,0 +1,7 @@
+While other level tools exist, our app also provides instant accessibility information. The AccessSlope tool is part of a suite of apps, known as “Access Ratings for Buildings”, or ARB, designed to measure the accessibility of the environment. Having knowledge of ramp slopes can help people with mobility impairments, especially those who use wheelchairs, determine whether they would be able to enter or maneuver within a building.
+
+Key Features of the App include:
+
+Evaluates the slope of ramps for accessibility. Users place their device on the runs and landings of a ramp. Then the app determines the slope of the ramp, and indicates level of accessibility.
+
+Quick accessibility measurement.

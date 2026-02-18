@@ -1,0 +1,23 @@
+Statement
+
+Providing assistance and tools for individuals with communicative, cognitive and mobility challenges, to be able to accomplish tasks that are essential and recreational.
+
+Features
+
+1) Word Bank: Can store texts or information required for various purposes. The stored text is played back using text-to-speech. Users have the opportunity to select the voice they prefer(5 voices available).
+
+Application
+a) For example, Gus, can store lyrics of various songs, and select those and listen to those words.
+b) Paul, can use the word bank to store phrases and words in various social settings and then instead of typing, select the word or phrases and play it back.
+
+2) Voice Assistant: Initial idea was to help with interacting with the phone, fully handsfree. Unfortunately, the phone hardware and various applications are in locked down. So, it can read WhatsApp message, but, could only reach the stage of composing a response, but not send it, as WhatsApp or Android do not allow(Sensible for security but a serious inconvenience for those who need it). Similarly, cannot accept a call simply by saying "accept call" or any other command.
+Thus to avoid confusion, now, it works only with "SMS". It reads the SMS for the user, and the user can reply by voice as well.
+
+The app does not need to be open. Once permission is given to access notification, it runs in the background. Reads SMS and then guides the user step by step to send the SMS. Outdoors works better with bluetooth headset due to noise issues, and better if the phone is in the pocket in a top or a shirt.
+
+Note: You can use "Ok, Google" command followed by appropriate commands to create SMS, email through GMAIL and Hangout messages by voice, on Android.
+
+Application
+a) It can help Xian to handle SMS handsfree for now.
+b) Listen to other notifications.
+c) Future, open web links and integrate with apps that allow for third party apps to function so to provide hands free experience.

@@ -1,0 +1,26 @@
+In a city of over eight million people, 800,000 New Yorkers are disabled. Because of old and costly infrastructure, many disabled people cannot use the same public transportation system that others rely on.
+
+Instead, many disabled commuters use paratransit. Paratransit is door-to-door public transportation for people with disabilities. Across the US, any city that has public transportation must also offer paratransit services. The 1990 Americans with Disabilities Act mandates it. In New York City, the paratransit program is called Access-A-Ride, and over 136,820 people use the program. According to data from the MTA, and there are an average of 44,590 new applications received monthly to enroll in the service [1]. There is a huge demand and need for paratransit.
+
+Unfortunately, Access-A-Ride, a service that was designed to help disabled people live independently, has ultimately taken away riders' independence by poorly communicating ride updates and status. The service is chronically late, and at its worst, abandons riders unintentionally. Access-A-Ride has only one platform for reaching users about ride updates – it's call center.
+
+In order to better assist Access-A-Ride in communicating with its users, I have created a prototype, Alert-A-Ride, for a mobile app that alerts riders with smart phone access to real-time data about their Access-A-Ride status in order to regain control over their day and manage their commutes.
+
+Here is a quick summary of pain points that Access-A-Riders face and features that Alert-A-Ride has taken into account in the design and development:
+
+Pain Point: The system isn't personalized, and people feel like a number.
+Feature: When logging into the app, a rider never needs to punch in a number. Instead, she can use her personal e-mail address and cell phone.
+
+Pain Point: Riders do not have on-demand information about ride status.
+Feature: After logging-in to Alert-A-Ride, a rider can see his upcoming ride. He has an immediate sense of how far away his ride is. If he wants more information, he can simply tap the Access-A-Ride icon. He'll know if his ride is going to be on time, and if not, when it's expected to arrive. The address or cross streets of the current location of the Access-A-Ride vehicle will also appear.
+
+Pain Point: Information about Access-A-Ride in multiple places and on multiple platforms.
+Feature: The app includes and consolidates multiple points of contact for Access-A-Ride. If a rider wants to report a late ride, all she has to do is click to call. If she wants to cancel a ride and take an accessible taxi or private car instead, she can do that too, just by clicking to call. She can click to book a ride online, using Access-A-Ride's current online booking system.
+
+Pain Point: Current ride alerts are only one way and on one platform.
+Feature: A redesigned alerts option caters to individual communication preferences. If a rider wants a text message when her ride is a mile away, she can create an alert. If another rider wants an e-mail when a ride is 5 miles away he can set-up alerts to his preferences. Alerts are easy to reset and readjust.
+
+Pain Point: No past data to use to plan future rides.
+Feature: Access to their trip history allows people to . If they need to look up an address they've been to recently, it's already logged for them. They can simply copy and paste their trip history and book their next ride online from the app.
+
+It's not just New York where these ideas could make a real impact. Across America, in every city that has public transportation, paratransit is required by law. Since presenting my project, I have rececived press and inquiries from various paratransit companies that would like to implement this idea. There is an opportunity to take what is now a second-class commuter system and transform it through already existing technology.

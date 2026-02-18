@@ -1,0 +1,3 @@
+Our team developed a real time over IP control of cartoon characters by teacher using Microsoft Kinect (like in movie Avatar) that keep kids engaged in education and physical activities. Our team believe that this technology could help kids on the spectrum and in collaboration with psychology department at College of Staten Island we will be doing full study this fall.
+
+Avatar characters controlled remotely by live person, which gives an opportunity to add a personal touch for every kid. Here short demo of first prototype https://www.youtube.com/watch?v=JHMOjyl_a08 most recent public NYC school prototype test https://www.youtube.com/watch?v=AUnWfJgrOhg

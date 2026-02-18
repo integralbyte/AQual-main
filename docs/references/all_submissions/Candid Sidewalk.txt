@@ -1,0 +1,9 @@
+Candid sidewalk is a cross platform Ruby on Rails Application that allows users to easily report hazardous infrastructure to their local representatives.
+
+When accessed through a smartphone, our app automatically pulls up the user's camera and allows him or her to take a picture of a pesky sidewalk or other hazard around them. Geolocation information is seamlessly captured by our app, and used to extract the address of the picture as well as the relevant person to alert. In one click, the image is sent in an email to the local council person for the district they are in, along with a gentle reminder that we all deserve safe sidewalks.
+
+Candid Sidewalk saves all the images a user has taken, as well as their locations. You can explore the various reports around you, or look back at the images you’ve sent.
+
+You can also access Candid Sidewalk on your desktop to view the density of reports in your area and know which routes to avoid.
+
+With Candid Sidewalk, we hope to give people a seamless way to take civic action and make sidewalks safer for everyone!

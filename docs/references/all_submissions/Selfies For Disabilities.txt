@@ -1,0 +1,25 @@
+in a discussion with family about disable persons, we talked about alzeihmer and people who confuse other people. Then, Boom! The "Selfies For Disabilities" app is born !
+
+This is the instructions for using Selfies For Disabilities :
+
+Download the app ( link can be founded in project's page )
+The app, when opened, will be in shooting mode. ( You can tape on the tiny camera icon to switch to frontal/principal camera° . You will find also an
+Click on train and the app should select the face of the person you're shooting
+tape on face name and enter the face name :p
+Click on Rec . The App will take selfies of your dude. When Rec finish click on stop training.
+Before to click on Search, you should do rec for at least two persons.
+Then when you click on search, the app detect the person face and tell who is that person based on the selfies taken before ;)
+
+Accomplishments that I'm proud of
+
+Giving a new solution to people with blindness and dementia ( like alzeihmer ) andhelp them in their crisis :)
+
+What's next for Selfies For Disabilities
+
+I expect to release soon a more stable version with design and UI improved to public soon . After this, I will work in expanding this app to wearable technologie.
+
+Try it out
+
+www.uploadable.ch
+
+www.uploadable.ch

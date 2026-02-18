@@ -1,0 +1,15 @@
+Transcense
+
+Problem
+
+15M American people suffer from disabling hearing loss, with higher than 40 dB of loss. Relying on
+lip-reading or current accessibility devices such as hearing aids, is insufficient in social and
+professional settings when there are multiple speakers.
+
+Product
+
+Transcense's unique product focuses on this unmet need, by providing a visual aid when hearing information becomes unreliable. As promising early results show, the Company has successfully developed a product solving this problem. It's a mobile application that automatically transcribes the group conversation to text, and shows to the deaf person who says what. The product has already proven it's value to the first beta users, who have shown consistent usage in a workplace (for more than 2 hours a day). With more than three quarters of American consumers owning a smartphone, and the speech recognition field having gone through a radical acceleration in the last 24 months due to new data-driven techniques, Transcense is uniquely positioned to be a pioneer in mobile-first accessibility.
+
+With one of the team members being deaf himself, and a second one being born as the only one hearing in a deaf family, we thought that we already knew all the ins and outs of the problem, and the target demographic. However we couldn't have been further from the truth. Only when we started talking to more deaf and hard of hearing individuals, but also other people in the space (e.g. audiologists), did we actually understand the full complexity of this challenge.
+
+Since then we have done in-person interviews with more than 200 people, to craft the first prototype of our mobile application. These people have taught us everything we know today about our business, ranging from the potential distribution and marketing channels, to the core features and pricing of the product. In the process of product development, we always have continuous interaction with our potential users and beta testers. They will tell us what works and what doesn't, and give us suggestion on potential features and ideas. The cycle of build measure learn, and engaging with the user for feedback has become an important part of the team's DNA.

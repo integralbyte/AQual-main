@@ -1,0 +1,27 @@
+PROBLEM I AM TRYING TO SOLVE:
+There are over 1.75 Billion smart phones in the world. Consuming and creating content on mobile phones (and wearable devices) is becoming critical both at workplace and in social context. However, smartphones have been a mixed blessing for visually-impaired people (VIP) and blind users. Although, it allows them to consume content easily, creating content is another story. There are no good mobile keyboards that work on a touchscreen. Although the current keyboards do allow blind users and VIP to type, they are not meant for productivity. They are error prone, slow and many users just end up avoiding typing. Dictation (speech-to-text) has definitely matured but it is still error prone and is awkward at workplace and social situations.
+
+HOW I DISCOVERED THE PROBLEM:
+One of these days, I was watching Netflix on my TV. I wanted to search for something & realized that my keyboard was kinda "far" and I was feeling too lazy to go and get it. I started wondering if I could have a keyboard on my remote control and got curious and started working on designing one. Once I finished my design, I realized that I didn't need to look at it to type and wondered if this could be used by people who were blind. I googled the nearest blind center and called them. They connected me to Ernie Molina. I met Ernie and he showed me the different methods he used to type on a mobile phone. I was shocked at the options available and Ernie resonated the need for a better input mechanism.
+
+SOLUTION
+My solution, Gestype, is a keyboard app (iOS) which is touchscreen friendly. It is designed for productivity and allows for fast (and error-free) typing.
+
+Gestype is based on patent-pending "overlapping keys" design, which is as follows: several keys in Gestype are triggered by gestures which are mutually exclusive which allows me to overlap those keys (keys sit on to of each other) and make them 12 times larger than they are in a normal keyboard. Large keys makes the keyboard robust and allows it to be used by anyone - regardless of visual impairment. The keyboard does have a learning curve but based on my testing, it is not steep. Here is a video of Ernie using the keyboard. Ernie is blind: https://www.youtube.com/watch?v=-2YN59cpC0A
+
+REPRESENTATIVE USERS I WORKED WITH:
+A. Ernie Molina: Ernie works at the Santa Clara Valley Blind Center as Rehabilitation Skills Instructor. He was the first person I contacted when I had the idea. Ernie has been EXTREMELY helpful and his feedback invaluable.
+
+B. David Nason: Dave is visually impaired and lives in Dublin, Ireland. I met Dave via twitter and he agreed to be a part of beta-testers. I communicated with him via Skype calls and his feedback was VERY useful in making sure that the app works for people with visual disability.
+
+HOW USER FEEDBACK HELPED DEFINE THE PRODUCT
+A. Ernie: GesType wouldn't exist without Ernie's help.
+
+Initially, I took the design drawn on a piece of paper to Ernie and got the go ahead for the next step. Then I designed an arduino based hardware with joystick to simulate the keyboard. This gave me a lot of feedback. I realised that a. Ernie was concerned about the size and shape of the keyboard and I realized that external hardware based solutions won't fly . Joysticks are problematic because they offered too many degrees of freedom. This got me started on learning app development. My first design had 4 quadrants. As Ernie was testing it out, he had a hard time finding the 4 quadrants , which made me change the design to only 2 blocks (the current version). Further, there were issues with voice-over and he suggested that I add sounds to all the actions (except when screen switches from a,b,c,d to m,n,o,p).
+
+B: Dave: Dave provide lots of invaluable feedback on how visually impaired people would use the keyboard. He pointed out (in the earlier version) that contrast was weak and he needed strong contrast to be able to make out things. Further, he expressed the need for one-handed typing and asked me to add Spacebar and Delete keys (They now appear on lonpressing the "Clear" button). Further, a slider has been added which allows for one-handed operation. Several other minor updates were suggested which have been incorporated (as described in the questionnaire)
+
+Overall, Ernie and Dave have been very helpful in defining this keyboard.
+
+FEEDBACK ON THE LATEST SOLUTION:
+Here is Ernie's feedback on the final solution: https://www.youtube.com/watch?v=zT53Sqy6Mj4

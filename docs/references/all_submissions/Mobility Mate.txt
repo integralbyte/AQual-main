@@ -1,0 +1,23 @@
+Inspiration
+
+People with disabilities often struggle with finding accessible accommodations. We propose to create a simple web-based application, running on a computer or a mobile device, that will crowd-source this information and display it as a Google maps overlay.
+
+How it works
+
+The application stores locations in a database. Each location has a latitude, longitude, an amenity type (e.g. "curb cut"), and an optional note. The locations are overlaid on a Google map, with the user choosing which types of amenities to display.
+
+The user can add a location to the database by clicking "NEW" on the menu bar. The user can enter the latitude and longitude directly, or allow the application to fill in the latitude and longitude by using the GPS receiver on the device. Users can also search by place name.
+
+Next steps
+
+Add more location-specific details
+
+Crowd-source more data!
+
+Implement voting and moderation to ensure data quality
+
+Use Google Indoor Maps
+
+Display elevation contours to help users plan routes avoiding steep inclines
+
+Develop a native smartphone app?

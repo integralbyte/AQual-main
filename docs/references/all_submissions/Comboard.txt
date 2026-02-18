@@ -1,0 +1,7 @@
+Comboard is for people from preschoolers to adults, who have various communicative and cognitive impairments. It provides easy to implement, easy to use communication method for Nonverbal special needs with Cognitive Disabilities (low function).
+
+Comboard is a mobile application which run almost on all smartphone and tablet (Android, IOS, Blackberry, Windows and others – All Cordova/Phonegap supported devices).
+
+With Comboard Parent/Caregiver prepare core vocabulary by taking pictures and recording related voices. The user click on the picture and the voice related to the picture is played.
+
+Compare to others methods such as Sign Language and Picture Exchange Communication System (PECS): Comboard is easy to learn, to use and to understand than sign language. It is easier to implement then PECS. It provides real pictures from the special need surrounding in seconds. User can have it all time in his/her pocket.

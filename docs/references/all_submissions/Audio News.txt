@@ -1,0 +1,7 @@
+Audio News is an unique hands & eyes free news app. My app reads news content either in feeds (rss, atom, etc) or in web pages with any html structure and allows the user control the app (including what to read next) with voice commands, i.e., without force him to look or touch in the device. The app is different from the existent apps (such as, umano) in a way that any news content can be read (not restricted to a specific selection) and I also developed an algorithm that just reads what really cares to the user (for example, the news body in a web page without headers, footers or inadvertent).
+
+Based on some feedback that makes me really proud, I believe that my app can help people:
+
+with sensory disabilities (specially those who are visual impairment or low vision) because (1) it works with Android "talkback" app and "explore by touch" feature and (2) I developed during one of my master thesis an algorithm that just reads the news body text from any HTML page; I believe that can help a lot because a blind person do not need anymore to navigate clueless through a web page, listen advertisement, etc;
+
+with mobility disabilities: the app uses speech recognition technology and is eyes and hands free! Anyone can now listen her favorite news sources without takes off her hands from ski poles or the steering wheel (please take a look to my youtube video).

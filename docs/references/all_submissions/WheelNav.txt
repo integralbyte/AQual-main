@@ -1,0 +1,22 @@
+Inspiration
+
+First of all I want to introduce myself. My name is Csongor Korosi and together with my teammate we are working in the navigation area, creating mobile apps which are making the people's life easier on the go. We were highly inspired by the video of Jason DaSilva, more precisely of the part which contains the following sentence from him: “In my wildest dreams I would like tech to do for me is create an augmented reality tool where I can go around the city, not having to use my hands, and be able to navigate and find out all of the accessible places around me”. I think Jason’s wildest dream can come true after trying out our app.
+
+About the app
+
+Our mobile app is called “WheelNav”. As its name describes it combines information about wheelchair-accessible places and navigation. Let me talk first about the accessible places part. As Jason said it’s a very big problem that some places are not accessible for peoples using wheelchairs(the entrance step is to high, there are no disabled toilets available). Instead of implementing a service which attaches this kind of information to places, we decided to use an open source service called http://wheelmap.org. It’s a service which is used to search, find and mark wheelchair-accessible places all around the world. So we grabbed this information and displayed it on the map. We are differentiating 4 type of places, each displayed with different colours:
+
+Accessible(green): no entrance step, all localities accessible without steps, disabled toilet is also available.
+
+Partially accessible(orange): entrance step not higher than 7 cm, most important localities accessible without steps.
+
+Not accessible(red): entrance step higher than 7 cm, most important localities not accessible without steps
+
+Unknown accessibility(grey): there is no information about the place.
+
+The user of the app can review further information about these places and has the possibility to change the accessibility of the place if it considers that the current accessibility attached to the place is wrong. This feature helps to improve the quality of the data, improves the accessibility information of places, gives back to the community. Taking in consideration the accessibility of the places it’s possible to plan your whole journey from home, to meet with friends only at accessible places, to visit other cities knowing which places are accessible.
+The other big component of the app is navigation. We tried to customise the whole navigation experience for people using wheelchairs. WheelNav offers the possibility to create routes from the current position of the user to any other position on the map. The routes are calculated taking in consideration the altitudes of the positions along the route, so it provides the fastest and smoothest routes to the user’s destination. Entering in navigation the user gets visual and audio turn by turn information. As Jason said without using his hands ha wants to get from point A to B. Following the instructions of the audio guidance component this can be easily achieved. WheelNav also offers a solution to another common problem when some areas of the city, parts of the streets are blocked. In this case it’s very hard to know on which street to go forward. Using the block road feature of the app, the engine will re route the user to help him to get to the desired place.
+
+Conclusion
+
+With the provided feedback by our end users and friends, we improved the app week by week to get to a production ready state. In the next month it will appear on App Store and we hope that it will help the life of a lot of people.

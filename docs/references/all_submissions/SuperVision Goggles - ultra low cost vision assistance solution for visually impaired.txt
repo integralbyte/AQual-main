@@ -1,0 +1,15 @@
+(A video description is accessible at http://www.eri.harvard.edu/squeek/SV_goggle_presentation.wmv)
+
+This submission addresses the high cost issue of head mounted vision assistance devices.
+
+Magnification is the most effective way to help visually impaired people see fine details. There are many types of magnification devices have been invented and available on the market, including optical magnifier, hand held telescope, CCTV, and smartphone camera apps. However, two features, hand-free and auto focusing for near and far distance, are missing in almost all of those magnification devices. A few devices may have one of the feature, but not both.
+
+There have been only two head mounted telescopic devices (eSight and Jordy) manufactured for visually impaired people. These two devices are hand-free and can auto focus. In some circumstances, this type of devices are particularly useful. Here are some life changing stories about eSight told by some users, http://esighteyewear.com/user-stories.
+
+While these devices sound so great, they are barely adopted by visually impaired people, because the cost is too high, $1500 or more. eSight only sold a few hundreds units so far, and Jordy has discontinued due to very small sale.
+
+Our solution only needs a low cost, off-the-shelf virtual reality glasses, if one already has a smartphone. The virtual reality glasses, which is also called Google cardboard glasses, cost between $4 to $40, and are widely available on the market. Just put a smartphone in the glasses, and run our app, one can right away has a head mounted vision assistance device that functions essentially same as the $1500 eSight device.
+
+To help visually impaired people easily use it in a variety situations, we met and discussed with several end users a number of times, and then implemented head movement controlled menu, flash light, contrast enhanced image mode, an innovative phone tapping gesture that allows quick zoom in/out, and a novel image stabilization function to cancel annoying image shaking at high zoom levels.
+
+Clinical vision test shown the device can help improve visual acuity by 8x in some patients. One end user said he now can read book for his kids like other parents without blocking their views (He used to use magnifier and be very close to book when reading).

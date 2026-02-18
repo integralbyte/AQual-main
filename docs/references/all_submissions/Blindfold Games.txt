@@ -1,0 +1,9 @@
+Even though many games are accessible, they are not designed for rapid audio play. For people with visual impairments, every step requires multiple gestures, and the fun of the game is quickly lost due to the complexity of the gestures. Sighted people can play those games much faster, and that's not fair.
+
+Each game is designed for rapid audio play, where everything is spoken to you, and the gestures are natural movements within the game.
+
+Our newest game, Blindfold Pong, lets you play the game of pong as an audio game. You hear one or two balls as they bounce against the side and back walls, and you move your iPhone left and right, as if it's the paddle, to hit the ball. You can also set the app to let your finger move the paddle. That's useful for people with more physical disabilities, or in settings where swinging your arm is inappropriate.
+
+Blindfold Pong will be submitted to iTunes for review within the next week or two. It's gone through about two months of testing by several dozen blind gamers.
+
+Our card games, use natural gestures to flip between cards or play a card. We also have Sudoku, Cryptogram and several arcade like games, and our flagship app, Blindfold Racer. Several people have done podcasts on Blindfold Racer.

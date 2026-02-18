@@ -1,0 +1,22 @@
+My Dad is a Masters Level Engineer who had a car accident that gave him a brain injury. While mostly functional, this unfortunately accentuated a characteristic of his, which is paranoia. Whenever my bro, me, or my mom take my Dad out for a car trip, around the 2-3 mile mark, inevitably, he panics and says, "Did you check if the stove is off?" It usually ends up with us screaming at each other, and him demanding that I turn the car around to go home and check if the stove is off.
+
+So, my solution to this is to build an IOT device, that talks to my Dad's phone and let's him know that the stove is off. It's not world changing. But it "should" make life a little simpler for my Dad. And give my family back our sanity.
+
+I originally built this device in under 20 hours for the TechCrunch Disrupt NYC 2015 hackathon, where I won against 109 other teams. You can read about the win here.
+
+http://www.courierpostonline.com/story/news/local/south-jersey/2015/06/19/hackathon-invention-winner/28988103/
+
+And here.
+
+http://cherryhillsun.com/2015/06/04/cherry-hill-natives-newest-invention-heating-up-in-the-hardware-community/
+
+And you can see my TechCrunch presentation of the device here.
+And you can see my presentation of it at TechCrunch here.
+
+http://techcrunch.com/video/stove-top-sensor-for-paranoid-stubborn-older-parents/518803675/?utm_campaign=naytev&utm_content=55469fc5e4b048002a3c4461&fb_ref=Default
+
+Afterwards, I made a full presentation of the device here:
+https://www.youtube.com/watch?v=vqUpmdOxk5s
+
+With a full technical presentation of the nuts and bolts of it here:
+https://www.youtube.com/watch?v=pPHEoEuO0as
