@@ -15,6 +15,7 @@ import time
 import uuid
 import urllib.parse
 import hashlib
+import logging
 from threading import Lock
 from pathlib import Path
 import httpx
@@ -30,18 +31,66 @@ from servers.config import get_env
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 app.logger.setLevel("INFO")
+SUPPRESS_RING_POLL_REQUEST_LOGS = str(get_env("SUPPRESS_RING_POLL_REQUEST_LOGS", "1")).strip().lower() not in ("0", "false", "no", "off")
+
+
+class _SuppressRingPollAccessLogs(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            message = record.getMessage()
+        except Exception:
+            return True
+        return "/ring-event/poll" not in message
+
+
+if SUPPRESS_RING_POLL_REQUEST_LOGS:
+    werkzeug_logger = logging.getLogger("werkzeug")
+    werkzeug_logger.addFilter(_SuppressRingPollAccessLogs())
+    # Suppress access-log spam from long-poll endpoints while keeping app-level logs.
+    werkzeug_logger.setLevel(logging.ERROR)
 
 GEMINI_API_KEY = get_env("GEMINI_API_KEY", "")
 GEMINI_MODEL = "gemini-3-flash-preview"
 GEMINI_THINKING_LEVEL = "LOW"
-GEMINI_LIVE_MODEL = get_env("GEMINI_LIVE_MODEL", "gemini-2.5-flash-native-audio-preview-12-2025")
+GEMINI_LIVE_MODEL = str(get_env("GEMINI_LIVE_MODEL", "")).strip() or "gemini-2.5-flash-native-audio-preview-12-2025"
 GEMINI_LIVE_MODEL_FALLBACKS = [
-    get_env("GEMINI_LIVE_FALLBACK_MODEL_1", "gemini-2.5-flash-native-audio-preview-09-2025"),
-    get_env("GEMINI_LIVE_FALLBACK_MODEL_2", ""),
+    str(get_env("GEMINI_LIVE_FALLBACK_MODEL_1", "")).strip() or "gemini-2.5-flash-native-audio-preview-09-2025",
+    str(get_env("GEMINI_LIVE_FALLBACK_MODEL_2", "")).strip(),
 ]
 ELEVENLABS_API_KEY = get_env("ELEVENLABS_API_KEY", "")
 ELEVENLABS_TTS_VOICE_ID = get_env("ELEVENLABS_TTS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
 ELEVENLABS_TTS_MODEL_ID = get_env("ELEVENLABS_TTS_MODEL_ID", "eleven_multilingual_v2")
+
+
+def _get_env_int(name: str, default: int, minimum=None, maximum=None) -> int:
+    raw = str(get_env(name, default)).strip()
+    try:
+        value = int(raw)
+    except Exception:
+        value = int(default)
+    if minimum is not None:
+        value = max(int(minimum), value)
+    if maximum is not None:
+        value = min(int(maximum), value)
+    return value
+
+
+def _get_env_float(name: str, default: float, minimum=None, maximum=None) -> float:
+    raw = str(get_env(name, default)).strip()
+    try:
+        value = float(raw)
+    except Exception:
+        value = float(default)
+    if minimum is not None:
+        value = max(float(minimum), value)
+    if maximum is not None:
+        value = min(float(maximum), value)
+    return value
+
+
+GEMINI_LIVE_THINKING_BUDGET = _get_env_int("GEMINI_LIVE_THINKING_BUDGET", 0, minimum=0, maximum=32768)
+GEMINI_LIVE_MAX_OUTPUT_TOKENS = _get_env_int("GEMINI_LIVE_MAX_OUTPUT_TOKENS", 160, minimum=32, maximum=2048)
+GEMINI_LIVE_TEMPERATURE = _get_env_float("GEMINI_LIVE_TEMPERATURE", 0.1, minimum=0.0, maximum=2.0)
 
 
 def get_gemini_client():
@@ -430,9 +479,9 @@ async def _run_live_query_once(
     config = types.LiveConnectConfig(
         # Native-audio models are served as audio turns; recover text via output transcription.
         response_modalities=["AUDIO"],
-        temperature=0.15,
-        max_output_tokens=220,
-        thinking_config=types.ThinkingConfig(thinking_budget=0),
+        temperature=GEMINI_LIVE_TEMPERATURE,
+        max_output_tokens=GEMINI_LIVE_MAX_OUTPUT_TOKENS,
+        thinking_config=types.ThinkingConfig(thinking_budget=GEMINI_LIVE_THINKING_BUDGET),
         media_resolution=types.MediaResolution.MEDIA_RESOLUTION_LOW,
         realtime_input_config=types.RealtimeInputConfig(
             automatic_activity_detection=types.AutomaticActivityDetection(disabled=True),
@@ -443,7 +492,7 @@ async def _run_live_query_once(
             "You are AQual, an accessibility assistant. "
             "Respond naturally in English. "
             "Do not include internal reasoning, analysis steps, or headings. "
-            "Reply in one to three concise sentences."
+            "Keep spoken replies short: one sentence when possible, at most two."
         ),
         session_resumption=types.SessionResumptionConfig(
             handle=resume_handle.strip() if resume_handle else None,
@@ -568,6 +617,9 @@ async def _run_live_query_with_fallbacks(
                 connected_ms=float(result.get("connected_ms", 0.0) or 0.0),
                 input_sent_ms=float(result.get("input_sent_ms", 0.0) or 0.0),
                 first_response_ms=float(result.get("first_response_ms", 0.0) or 0.0),
+                thinking_budget=GEMINI_LIVE_THINKING_BUDGET,
+                max_output_tokens=GEMINI_LIVE_MAX_OUTPUT_TOKENS,
+                temperature=GEMINI_LIVE_TEMPERATURE,
                 answer_chars=len(result.get("answer", "")),
                 transcript_chars=len(result.get("transcript", "")),
                 output_audio_bytes=int(result.get("audio_bytes", 0) or 0),
@@ -1602,6 +1654,9 @@ def gemini_live_query():
             source="webpage",
             model=GEMINI_LIVE_MODEL,
             fallback_models=[m for m in _iter_live_models() if m != GEMINI_LIVE_MODEL],
+            thinking_budget=GEMINI_LIVE_THINKING_BUDGET,
+            max_output_tokens=GEMINI_LIVE_MAX_OUTPUT_TOKENS,
+            temperature=GEMINI_LIVE_TEMPERATURE,
             page_host=_extract_host(page_url),
             conversation_id=conversation_id,
             resumed_session=bool(resume_handle),
@@ -1834,4 +1889,4 @@ def speak_text():
 
 
 if __name__ == '__main__':
-    app.run(debug=True, port=8080)
+    app.run(debug=False, use_reloader=False, port=8080)
