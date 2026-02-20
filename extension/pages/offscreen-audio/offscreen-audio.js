@@ -22,9 +22,15 @@ let geminiLiveStreamContextPayload = null;
 let geminiLiveStreamSocketReconnectTimer = null;
 let geminiLiveStreamSocketReconnectAttempts = 0;
 let geminiLiveStreamStopping = false;
+let geminiLiveStreamPlaybackContext = null;
+let geminiLiveStreamPlaybackNextTime = 0;
+let geminiLiveStreamPlaybackStarted = false;
+let geminiLiveStreamPlaybackSources = new Set();
+let geminiLiveStreamPlaybackTurnId = 0;
 
-const GEMINI_LIVE_SAMPLE_RATE = 24000;
-const GEMINI_LIVE_STREAM_PROCESSOR_FRAMES = 2048;
+const GEMINI_LIVE_STREAM_INPUT_SAMPLE_RATE = 16000;
+const GEMINI_LIVE_OUTPUT_SAMPLE_RATE = 24000;
+const GEMINI_LIVE_STREAM_PROCESSOR_FRAMES = 256;
 const GEMINI_LIVE_SOCKET_RECONNECT_BASE_MS = 250;
 const GEMINI_LIVE_SOCKET_RECONNECT_MAX_MS = 1600;
 const GEMINI_LIVE_SOCKET_MAX_RETRIES = 20;
@@ -91,6 +97,125 @@ function arrayBufferToBase64(buffer) {
   return btoa(binary);
 }
 
+function base64ToUint8Array(base64) {
+  const clean = String(base64 || "").trim();
+  if (!clean) return new Uint8Array(0);
+  const binary = atob(clean);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+function parsePcmSampleRateFromMime(mimeType, fallback = GEMINI_LIVE_OUTPUT_SAMPLE_RATE) {
+  const token = String(mimeType || "").toLowerCase();
+  const match = token.match(/rate\s*=\s*(\d+)/);
+  if (!match) return fallback;
+  const parsed = Number(match[1] || 0);
+  if (!Number.isFinite(parsed) || parsed < 8000 || parsed > 96000) return fallback;
+  return Math.round(parsed);
+}
+
+function stopGeminiLiveStreamPlaybackQueue() {
+  for (const source of geminiLiveStreamPlaybackSources) {
+    try {
+      source.stop(0);
+    } catch (_error) {
+      // Ignore stop races.
+    }
+    try {
+      source.disconnect();
+    } catch (_error) {
+      // Ignore disconnect races.
+    }
+  }
+  geminiLiveStreamPlaybackSources.clear();
+  geminiLiveStreamPlaybackNextTime = 0;
+  geminiLiveStreamPlaybackStarted = false;
+  geminiLiveStreamPlaybackTurnId = 0;
+}
+
+function enqueueGeminiLiveOutputAudioChunk(
+  audioBase64,
+  audioMimeType = "audio/pcm;rate=24000",
+  turnIdRaw = 0
+) {
+  const turnId = Number(turnIdRaw) || 0;
+  if (turnId && geminiLiveStreamPlaybackTurnId && turnId !== geminiLiveStreamPlaybackTurnId) {
+    // Keep only one active spoken response in live mode.
+    stopGeminiLivePlayback();
+  }
+  if (turnId) {
+    geminiLiveStreamPlaybackTurnId = turnId;
+  }
+
+  const bytes = base64ToUint8Array(audioBase64);
+  if (bytes.byteLength < 2) {
+    return;
+  }
+
+  const sampleRate = parsePcmSampleRateFromMime(audioMimeType, GEMINI_LIVE_OUTPUT_SAMPLE_RATE);
+  let playbackContext = geminiLiveStreamPlaybackContext;
+  if (!playbackContext || playbackContext.state === "closed") {
+    playbackContext = new AudioContext({ sampleRate, latencyHint: "interactive" });
+    geminiLiveStreamPlaybackContext = playbackContext;
+    geminiLiveStreamPlaybackNextTime = 0;
+    geminiLiveStreamPlaybackStarted = false;
+  }
+
+  if (playbackContext.state === "suspended") {
+    playbackContext.resume().catch(() => {
+      // Resume may fail transiently; next chunk will retry.
+    });
+  }
+
+  const frameCount = Math.floor(bytes.byteLength / 2);
+  if (frameCount <= 0) {
+    return;
+  }
+
+  const view = new DataView(bytes.buffer, bytes.byteOffset, frameCount * 2);
+  const buffer = playbackContext.createBuffer(1, frameCount, sampleRate);
+  const channel = buffer.getChannelData(0);
+  for (let i = 0; i < frameCount; i += 1) {
+    const value = view.getInt16(i * 2, true);
+    channel[i] = value / 32768;
+  }
+
+  const source = playbackContext.createBufferSource();
+  source.buffer = buffer;
+  source.connect(playbackContext.destination);
+
+  const now = playbackContext.currentTime;
+  // Keep chunk playback strictly sequential to prevent overlapping voices.
+  const startAt = Math.max(now + 0.005, geminiLiveStreamPlaybackNextTime || (now + 0.005));
+  geminiLiveStreamPlaybackNextTime = startAt + buffer.duration;
+  geminiLiveStreamPlaybackSources.add(source);
+  source.onended = () => {
+    geminiLiveStreamPlaybackSources.delete(source);
+    if (!geminiLiveStreamPlaybackSources.size) {
+      chrome.runtime.sendMessage({
+        type: "aqual-gemini-live-playback-state",
+        state: "ended"
+      });
+    }
+  };
+
+  try {
+    source.start(startAt);
+    if (!geminiLiveStreamPlaybackStarted) {
+      geminiLiveStreamPlaybackStarted = true;
+      chrome.runtime.sendMessage({
+        type: "aqual-gemini-live-playback-state",
+        state: "playing"
+      });
+    }
+  } catch (_error) {
+    geminiLiveStreamPlaybackSources.delete(source);
+  }
+}
+
 function downsample(buffer, inputSampleRate, outputSampleRate) {
   if (inputSampleRate === outputSampleRate) {
     return buffer;
@@ -114,6 +239,7 @@ function emitGeminiLiveStreamState(state, error = "", sessionIdOverride = null) 
 }
 
 function stopGeminiLivePlayback() {
+  stopGeminiLiveStreamPlaybackQueue();
   if (!geminiLivePlaybackAudio) return;
   try {
     geminiLivePlaybackAudio.pause();
@@ -251,6 +377,7 @@ function scheduleGeminiLiveSocketReconnect(sessionId, detail = "") {
     GEMINI_LIVE_SOCKET_RECONNECT_BASE_MS * (2 ** Math.max(0, geminiLiveStreamSocketReconnectAttempts - 1)),
     GEMINI_LIVE_SOCKET_RECONNECT_MAX_MS
   );
+  stopGeminiLiveStreamPlaybackQueue();
   emitGeminiLiveStreamState("reconnecting", detail, sessionId);
   geminiLiveStreamSocketReconnectTimer = setTimeout(() => {
     geminiLiveStreamSocketReconnectTimer = null;
@@ -326,6 +453,15 @@ function openGeminiLiveSocket(sessionId, contextPayload) {
       return;
     }
 
+    if (eventType === "output_audio_chunk") {
+      enqueueGeminiLiveOutputAudioChunk(
+        String(payload.audioBase64 || ""),
+        String(payload.audioMimeType || "audio/pcm;rate=24000"),
+        Number(payload.turnId || 0)
+      );
+      return;
+    }
+
     if (eventType === "turn_result") {
       const turnId = Number(payload.turnId || 0);
       if (turnId && turnId <= geminiLiveLastPlayedTurnId) {
@@ -333,17 +469,7 @@ function openGeminiLiveSocket(sessionId, contextPayload) {
       }
       if (turnId) {
         geminiLiveLastPlayedTurnId = turnId;
-      }
-
-      const audioBase64 = String(payload.audioBase64 || "").trim();
-      const audioMimeType = String(payload.audioMimeType || "audio/wav").trim() || "audio/wav";
-      if (audioBase64) {
-        playGeminiLiveAudio({
-          audioBase64,
-          audioMimeType
-        }).catch((_error) => {
-          // Playback errors are already emitted via playback-state.
-        });
+        geminiLiveStreamPlaybackTurnId = turnId;
       }
 
       chrome.runtime.sendMessage({
@@ -391,6 +517,7 @@ async function startGeminiLiveStream(sessionIdRaw, contextPayload = null) {
   if (geminiLiveStreamActive && geminiLiveStreamSessionId === sessionId) {
     return;
   }
+  stopGeminiLivePlayback();
 
   if (recording) {
     stopRecording();
@@ -417,10 +544,11 @@ async function startGeminiLiveStream(sessionIdRaw, contextPayload = null) {
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: {
         channelCount: 1,
-        sampleRate: GEMINI_LIVE_SAMPLE_RATE,
+        sampleRate: GEMINI_LIVE_STREAM_INPUT_SAMPLE_RATE,
         echoCancellation: true,
         noiseSuppression: true,
-        autoGainControl: true
+        autoGainControl: true,
+        latency: 0
       }
     });
     if (!geminiLiveStreamActive || geminiLiveStreamSessionId !== sessionId) {
@@ -429,7 +557,10 @@ async function startGeminiLiveStream(sessionIdRaw, contextPayload = null) {
     }
     mediaStream = stream;
 
-    const context = new AudioContext({ sampleRate: GEMINI_LIVE_SAMPLE_RATE });
+    const context = new AudioContext({
+      sampleRate: GEMINI_LIVE_STREAM_INPUT_SAMPLE_RATE,
+      latencyHint: "interactive"
+    });
     if (!geminiLiveStreamActive || geminiLiveStreamSessionId !== sessionId) {
       context.close();
       return;
@@ -448,7 +579,7 @@ async function startGeminiLiveStream(sessionIdRaw, contextPayload = null) {
         return;
       }
       const inputData = event.inputBuffer.getChannelData(0);
-      const resampled = downsample(inputData, context.sampleRate, GEMINI_LIVE_SAMPLE_RATE);
+      const resampled = downsample(inputData, context.sampleRate, GEMINI_LIVE_STREAM_INPUT_SAMPLE_RATE);
       const pcmData = floatTo16BitPCM(resampled);
       try {
         ws.send(pcmData.buffer);
@@ -522,6 +653,16 @@ function cleanupAudioSession() {
     ws.onclose = null;
     try {
       ws.close();
+    } catch (_error) {
+      // Ignore close races.
+    }
+  }
+  stopGeminiLiveStreamPlaybackQueue();
+  if (geminiLiveStreamPlaybackContext) {
+    const ctx = geminiLiveStreamPlaybackContext;
+    geminiLiveStreamPlaybackContext = null;
+    try {
+      ctx.close();
     } catch (_error) {
       // Ignore close races.
     }
@@ -861,6 +1002,10 @@ chrome.runtime.onMessage.addListener((message) => {
     stopRecording();
   }
   if (message.type === "aqual-gemini-live-play-audio") {
+    if (geminiLiveStreamActive) {
+      // In websocket live mode, streamed chunks are the only playback source.
+      return;
+    }
     playGeminiLiveAudio(message);
   }
   if (message.type === "aqual-gemini-live-stop-playback") {

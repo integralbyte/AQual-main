@@ -124,10 +124,12 @@ let geminiLiveInFlightSequence = 0;
 let geminiLiveCachedScreenshotDataUrl = "";
 let geminiLiveCachedScreenshotCapturedAt = 0;
 let geminiLiveCachedScreenshotPageUrl = "";
+let geminiLiveLastToggleAt = 0;
 
 const GEMINI_LIVE_SCREENSHOT_REFRESH_MS = 12000;
 const GEMINI_LIVE_MAX_QUEUE_SIZE = 2;
 const GEMINI_LIVE_REQUEST_TIMEOUT_MS = 20000;
+const GEMINI_LIVE_TOGGLE_DEBOUNCE_MS = 500;
 const RING_HID_USAGE_PAGE = 0x000d;
 const RING_HID_DEBOUNCE_MS = 320;
 const RING_HID_DEFAULT_STATUS = "Not connected. Press Connect and choose your ring.";
@@ -4930,7 +4932,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
   }
   if (message.type === "aqual-gemini-live-toggle") {
+    const now = Date.now();
+    if (now - geminiLiveLastToggleAt < GEMINI_LIVE_TOGGLE_DEBOUNCE_MS) {
+      return false;
+    }
+    geminiLiveLastToggleAt = now;
     toggleGeminiLiveCall(sender);
+    return false;
   }
   if (message.type === "aqual-gemini-live-hold") {
     // Legacy hold flow (kept for compatibility).
