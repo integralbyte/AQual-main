@@ -222,41 +222,27 @@ function hasRingPressSignal(dataView) {
   return false;
 }
 
-function toggleHighContrastFromRing(device) {
-  getSettings((settings) => {
-    const nextEnabled = !Boolean(settings.highContrastEnabled);
-    const updates = { highContrastEnabled: nextEnabled };
-    chrome.storage.sync.set(updates, () => {
-      const nextSettings = { ...settings, ...updates };
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        if (!tabs || !tabs.length) return;
-        sendToTab(tabs[0].id, nextSettings);
-      });
-
-      const label = formatRingHidDeviceLabel(device);
-      localSet({
-        aqualRingHidStatus: `${label} connected. Button press toggled high contrast ${nextEnabled ? "ON" : "OFF"}.`,
-        aqualRingHidLastToggleAt: Date.now()
-      });
+function toggleVoiceCommandMicFromRing(source = "ring", device = null) {
+  const sourceLabel = String(source || "ring");
+  const deviceLabel = device ? formatRingHidDeviceLabel(device) : "";
+  if (holdActive) {
+    stopAudioHoldSession(activeHoldId || 0);
+    localSet({
+      aqualRingHidStatus: `${deviceLabel || "Ring"} mic OFF (${sourceLabel}).`,
+      aqualRingHidLastToggleAt: Date.now()
     });
-  });
-}
+    return;
+  }
 
-function toggleHighContrastFromBackendRing(source = "backend-ring-monitor") {
-  getSettings((settings) => {
-    const nextEnabled = !Boolean(settings.highContrastEnabled);
-    const updates = { highContrastEnabled: nextEnabled };
-    chrome.storage.sync.set(updates, () => {
-      const nextSettings = { ...settings, ...updates };
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        if (!tabs || !tabs.length) return;
-        sendToTab(tabs[0].id, nextSettings);
-      });
-      localSet({
-        aqualRingHidStatus: `Backend ring event (${source}) toggled high contrast ${nextEnabled ? "ON" : "OFF"}.`,
-        aqualRingHidLastToggleAt: Date.now()
-      });
-    });
+  if (geminiLiveCallActive) {
+    stopGeminiLiveCall("Live call OFF.", true);
+  }
+
+  const holdId = Date.now();
+  startAudioHoldSession(holdId);
+  localSet({
+    aqualRingHidStatus: `${deviceLabel || "Ring"} mic ON (${sourceLabel}).`,
+    aqualRingHidLastToggleAt: Date.now()
   });
 }
 
@@ -278,7 +264,7 @@ function handleRingHidInputReport(event) {
     return;
   }
   ringHidLastToggleAt = now;
-  toggleHighContrastFromRing(device);
+  toggleVoiceCommandMicFromRing("webhid", device);
 }
 
 async function detachRingHidDevice(device) {
@@ -380,7 +366,7 @@ async function connectRingHidDevice(selection) {
       productId: Number(device.productId || selected.productId),
       productName: String(device.productName || selected.productName || "Ring HID device")
     },
-    aqualRingHidStatus: `${formatRingHidDeviceLabel(device)} connected. Press the ring button to toggle high contrast.`
+    aqualRingHidStatus: `${formatRingHidDeviceLabel(device)} connected. Press the ring button to toggle voice mic on/off.`
   });
 
   return { ok: true };
@@ -4791,14 +4777,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
     return true;
   }
-  if (message.type === "aqual-ring-backend-toggle") {
+  if (message.type === "aqual-ring-backend-toggle" || message.type === "aqual-ring-backend-mic-toggle") {
     const now = Date.now();
     if (now - backendRingLastToggleAt < BACKEND_RING_TOGGLE_DEBOUNCE_MS) {
       sendResponse({ ok: true, ignored: true });
       return false;
     }
     backendRingLastToggleAt = now;
-    toggleHighContrastFromBackendRing(String(message.source || "backend-ring-monitor"));
+    toggleVoiceCommandMicFromRing(String(message.source || "backend-ring-monitor"), null);
     sendResponse({ ok: true });
     return false;
   }

@@ -31,6 +31,8 @@ STOP = False
 PREFERRED_RING_NAME_EXACT = "yiser-j6"
 PREFERRED_RING_NAME_TOKENS = ("yiser", "ring", "page", "turn")
 PREFERRED_RING_VID_PID = (0x05AC, 0x022C)
+YISER_J6_DEFAULT_BUTTON_INDEX = 1
+YISER_J6_DEFAULT_PRESS_VALUE = 3
 
 
 def _parse_int(raw, default=0):
@@ -105,6 +107,24 @@ def _score_candidate(info):
     if "keyboard" in name_blob:
         score -= 8
     return score
+
+
+def _is_preferred_ring(info):
+    vendor_id = int(info.get("vendor_id") or 0)
+    product_id = int(info.get("product_id") or 0)
+    return (vendor_id, product_id) == PREFERRED_RING_VID_PID
+
+
+def _matches_yiser_j6_frame_signature(report_norm):
+    if len(report_norm) < 6:
+        return False
+    return (
+        report_norm[0] == 1
+        and report_norm[2] == 220
+        and report_norm[3] == 0
+        and report_norm[4] == 44
+        and report_norm[5] == 1
+    )
 
 
 def _enumerate_candidates(args):
@@ -188,22 +208,45 @@ def _monitor_device(args, device_info):
     device.set_nonblocking(True)
 
     print(f"[ring-monitor] connected: {_device_label(device_info)}")
+    use_strict_yiser_profile = _is_preferred_ring(device_info) and not args.disable_yiser_filter
+    if use_strict_yiser_profile:
+        print(
+            "[ring-monitor] strict button filter active: "
+            f"byte_index={args.target_byte_index} press_value={args.yiser_press_value}"
+        )
+
     last_report = None
     last_press_ms = 0.0
     press_armed = True
+    press_active = False
+    press_started_ms = 0.0
+    hold_reported = False
 
     try:
         while not STOP:
+            now_ms = time.time() * 1000.0
             try:
                 report = device.read(args.report_length)
             except Exception as read_error:
                 raise RuntimeError(f"HID read failed: {read_error}")
 
             if not report:
+                if press_active and not hold_reported and (now_ms - press_started_ms >= args.hold_ms):
+                    hold_reported = True
+                    print(
+                        f"[ring-monitor] hold ongoing duration_ms={now_ms - press_started_ms:.1f} "
+                        f"(threshold={args.hold_ms})"
+                    )
                 time.sleep(args.poll_ms / 1000.0)
                 continue
 
             report_norm = tuple(int(byte) & 0xFF for byte in report)
+            if use_strict_yiser_profile and not _matches_yiser_j6_frame_signature(report_norm):
+                if args.verbose:
+                    print(f"[ring-monitor] ignored non-target frame={json.dumps(list(report_norm)[:16])}")
+                last_report = report_norm
+                continue
+
             if last_report is None:
                 last_report = report_norm
                 if args.verbose:
@@ -213,16 +256,52 @@ def _monitor_device(args, device_info):
             if report_norm == last_report:
                 continue
 
-            rising_edge = False
-            falling_edge = False
+            rising_edge_indexes = []
+            falling_edge_indexes = []
             changed = 0
-            for i in range(min(len(last_report), len(report_norm))):
-                if last_report[i] != report_norm[i]:
-                    changed += 1
-                    if last_report[i] == 0 and report_norm[i] != 0:
-                        rising_edge = True
-                    if last_report[i] != 0 and report_norm[i] == 0:
-                        falling_edge = True
+
+            if use_strict_yiser_profile:
+                idx = max(0, int(args.target_byte_index))
+                if idx >= len(last_report) or idx >= len(report_norm):
+                    last_report = report_norm
+                    continue
+                prev_value = int(last_report[idx]) & 0xFF
+                curr_value = int(report_norm[idx]) & 0xFF
+                if prev_value != curr_value:
+                    changed = 1
+                if prev_value == 0 and curr_value == int(args.yiser_press_value):
+                    rising_edge_indexes.append(idx)
+                if prev_value == int(args.yiser_press_value) and curr_value == 0:
+                    falling_edge_indexes.append(idx)
+                # Ignore unrelated state changes (e.g., other ring buttons).
+                if changed and not rising_edge_indexes and not falling_edge_indexes:
+                    if args.verbose:
+                        print(
+                            "[ring-monitor] ignored transition "
+                            f"byte[{idx}] {prev_value}->{curr_value} (not target press/release)"
+                        )
+                    last_report = report_norm
+                    continue
+            else:
+                for i in range(min(len(last_report), len(report_norm))):
+                    if last_report[i] != report_norm[i]:
+                        changed += 1
+                        if last_report[i] == 0 and report_norm[i] != 0:
+                            rising_edge_indexes.append(i)
+                        if last_report[i] != 0 and report_norm[i] == 0:
+                            falling_edge_indexes.append(i)
+            rising_edge = len(rising_edge_indexes) > 0
+            falling_edge = len(falling_edge_indexes) > 0
+
+            if rising_edge and not press_active:
+                press_active = True
+                press_started_ms = now_ms
+                hold_reported = False
+                print(
+                    f"[ring-monitor] press down edge_indexes={rising_edge_indexes} "
+                    f"report={json.dumps(list(report_norm)[:16])}"
+                )
+
             # If there is no explicit 0->nonzero edge, fall back to "any change"
             # so devices with non-binary reports still work.
             should_emit = False
@@ -236,8 +315,22 @@ def _monitor_device(args, device_info):
 
             if falling_edge:
                 press_armed = True
+                if press_active:
+                    duration_ms = now_ms - press_started_ms
+                    if hold_reported or duration_ms >= args.hold_ms:
+                        print(
+                            f"[ring-monitor] hold detected duration_ms={duration_ms:.1f} "
+                            f"(threshold={args.hold_ms}) edge_indexes={falling_edge_indexes}"
+                        )
+                    else:
+                        print(
+                            f"[ring-monitor] tap detected duration_ms={duration_ms:.1f} "
+                            f"edge_indexes={falling_edge_indexes}"
+                        )
+                    press_active = False
+                    hold_reported = False
+                    press_started_ms = 0.0
 
-            now_ms = time.time() * 1000.0
             if should_emit and (now_ms - last_press_ms >= args.debounce_ms):
                 try:
                     _push_ring_event(
@@ -257,7 +350,7 @@ def _monitor_device(args, device_info):
                 print(
                     f"[ring-monitor] report={json.dumps(list(report_norm)[:16])} "
                     f"rising_edge={rising_edge} falling_edge={falling_edge} "
-                    f"armed={press_armed} changed={changed}"
+                    f"armed={press_armed} press_active={press_active} changed={changed}"
                 )
     finally:
         try:
@@ -284,6 +377,23 @@ def _build_arg_parser():
     parser.add_argument("--index", type=int, default=-1, help="Candidate index to use. -1 = auto-select best match.")
     parser.add_argument("--poll-ms", type=int, default=15, help="Read polling interval in ms.")
     parser.add_argument("--debounce-ms", type=int, default=260, help="Debounce for press events.")
+    parser.add_argument("--hold-ms", type=int, default=450, help="Hold threshold in ms for hold/tap logging.")
+    parser.add_argument(
+        "--disable-yiser-filter",
+        action="store_true",
+        help="Disable strict button filtering for Yiser-J6 (not recommended for your demo).",
+    )
+    parser.add_argument(
+        "--target-byte-index",
+        type=int,
+        default=YISER_J6_DEFAULT_BUTTON_INDEX,
+        help="Strict filter byte index used for target button transitions.",
+    )
+    parser.add_argument(
+        "--yiser-press-value",
+        default=str(YISER_J6_DEFAULT_PRESS_VALUE),
+        help="Strict filter press value for target byte (accepts decimal or hex, e.g. 3 or 0x03).",
+    )
     parser.add_argument("--report-length", type=int, default=64, help="HID report read length.")
     parser.add_argument("--verbose", action="store_true", help="Verbose HID logging.")
     return parser
@@ -295,6 +405,7 @@ def main():
     args.vid = _parse_int(args.vid, default=None) if args.vid is not None else None
     args.pid = _parse_int(args.pid, default=None) if args.pid is not None else None
     args.usage_page = _parse_int(args.usage_page, default=None) if args.usage_page is not None else None
+    args.yiser_press_value = _parse_int(args.yiser_press_value, default=YISER_J6_DEFAULT_PRESS_VALUE)
 
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)

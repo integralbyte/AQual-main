@@ -3454,7 +3454,7 @@ async function pollRingBackendEvents() {
       return;
     }
 
-    // Each button press toggles high contrast. If we missed multiple events, parity preserves net state.
+    // Each button press toggles mic listening. If we missed multiple events, parity preserves net state.
     if (Math.abs(Math.trunc(delta)) % 2 !== 1) {
       return;
     }
@@ -3464,7 +3464,7 @@ async function pollRingBackendEvents() {
       return;
     }
     ringEventLastToggleAt = now;
-    safeRuntimeMessage({ type: "aqual-ring-backend-toggle", source: "ring-event-poll" });
+    safeRuntimeMessage({ type: "aqual-ring-backend-mic-toggle", source: "ring-event-poll" });
   } catch (_error) {
     // Ignore backend polling errors to keep page interaction smooth.
   } finally {
