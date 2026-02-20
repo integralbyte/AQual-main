@@ -1799,6 +1799,578 @@ function resolveSkyscannerProviderFromPayload(payload) {
   return { ok: false, error: `No provider matched "${providerKeywordRaw}".` };
 }
 
+function normalizeLearnText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function tokenizeLearnText(value) {
+  return normalizeLearnText(value)
+    .split(" ")
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 2);
+}
+
+function getLearnTextScore(query, candidateText) {
+  const queryNormalized = normalizeLearnText(query);
+  const candidateNormalized = normalizeLearnText(candidateText);
+  if (!queryNormalized || !candidateNormalized) return 0;
+  if (candidateNormalized === queryNormalized) return 1;
+  if (candidateNormalized.includes(queryNormalized)) return 0.98;
+
+  const queryTokens = tokenizeLearnText(queryNormalized);
+  const candidateTokens = tokenizeLearnText(candidateNormalized);
+  let tokenHits = 0;
+  for (let i = 0; i < queryTokens.length; i += 1) {
+    const token = queryTokens[i];
+    if (candidateTokens.some((candidateToken) => candidateToken.includes(token) || token.includes(candidateToken))) {
+      tokenHits += 1;
+    }
+  }
+
+  const tokenScore = queryTokens.length ? (tokenHits / queryTokens.length) : 0;
+  const fuzzyScore = similarityScore(queryNormalized, candidateNormalized);
+  return Math.max(tokenScore, fuzzyScore);
+}
+
+function isElementLikelyVisible(element) {
+  if (!element || !element.isConnected || !element.getBoundingClientRect) return false;
+  const rect = element.getBoundingClientRect();
+  return rect.width > 0 && rect.height > 0;
+}
+
+function waitForLearnUi(ms = 350) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function scrollLearnToBottom(maxPasses = 5) {
+  let previousHeight = -1;
+  for (let i = 0; i < maxPasses; i += 1) {
+    const nextHeight = Math.max(
+      document.body ? document.body.scrollHeight : 0,
+      document.documentElement ? document.documentElement.scrollHeight : 0
+    );
+    window.scrollTo({ top: nextHeight, behavior: "smooth" });
+    await waitForLearnUi(450);
+    const settledHeight = Math.max(
+      document.body ? document.body.scrollHeight : 0,
+      document.documentElement ? document.documentElement.scrollHeight : 0
+    );
+    if (settledHeight <= previousHeight + 4) {
+      break;
+    }
+    previousHeight = settledHeight;
+  }
+}
+
+function activateLearnElement(target) {
+  if (!target) return "";
+
+  try {
+    target.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+  } catch (_error) {
+    // Ignore scroll errors.
+  }
+
+  try {
+    target.focus({ preventScroll: true });
+  } catch (_error) {
+    // Ignore focus errors.
+  }
+
+  let href = "";
+  if (target.tagName && target.tagName.toLowerCase() === "a") {
+    href = parseHttpUrl(getAnchorRawHref(target));
+  } else {
+    const linked = target.closest && target.closest("a[href]");
+    if (linked) {
+      href = parseHttpUrl(getAnchorRawHref(linked));
+    }
+  }
+
+  try {
+    target.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }));
+    target.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window }));
+  } catch (_error) {
+    // Ignore synthetic mouse event failures.
+  }
+
+  try {
+    target.click();
+  } catch (_error) {
+    // Ignore click errors.
+  }
+
+  return href;
+}
+
+function collectLearnCourseCandidates() {
+  const seen = new Set();
+  const candidates = [];
+
+  const pushCandidate = (node, clickable, label) => {
+    if (!node) return;
+    const normalizedLabel = String(label || "").replace(/\s+/g, " ").trim();
+    const clickableHref = clickable && clickable.getAttribute ? (clickable.getAttribute("href") || "") : "";
+    const identity = [
+      clickable && clickable.tagName ? clickable.tagName : (node.tagName || "node"),
+      clickable && clickable.id ? clickable.id : (node.id || ""),
+      clickableHref,
+      normalizedLabel
+    ].join("|");
+    if (seen.has(identity)) return;
+    seen.add(identity);
+    candidates.push({
+      node,
+      clickable: clickable || node,
+      label: normalizedLabel
+    });
+  };
+
+  const cards = document.querySelectorAll("bb-base-course-card article, bb-base-course-card");
+  cards.forEach((card) => {
+    const clickable = card.querySelector("a[href*='/ultra/courses/'], a[href], button") || card;
+    const label = [
+      card.getAttribute("aria-label") || "",
+      clickable.getAttribute && clickable.getAttribute("aria-label") ? clickable.getAttribute("aria-label") : "",
+      card.textContent || ""
+    ].join(" ").replace(/\s+/g, " ").trim();
+    pushCandidate(card, clickable, label);
+  });
+
+  const legacyCards = document.querySelectorAll(
+    "article.course-element-card[data-course-id], article.element-card.course-element-card[data-course-id], article[bb-click-to-invoke-child='a.course-title']"
+  );
+  legacyCards.forEach((card) => {
+    const legacyAnchor = card.querySelector(
+      "a.course-title, a[analytics-id*='courseLink'], a[ng-click*='handleCourseLinkClick']"
+    );
+    const clickable = card.hasAttribute("bb-click-to-invoke-child")
+      ? card
+      : (legacyAnchor || card.querySelector("a[href], button") || card);
+    const titleEl = card.querySelector("h4.js-course-title-element, h4, .course-id");
+    const label = [
+      card.getAttribute("aria-label") || "",
+      titleEl && titleEl.textContent ? titleEl.textContent : "",
+      legacyAnchor && legacyAnchor.getAttribute("aria-label") ? legacyAnchor.getAttribute("aria-label") : "",
+      card.textContent || ""
+    ].join(" ").replace(/\s+/g, " ").trim();
+    pushCandidate(card, clickable, label);
+  });
+
+  const courseAnchors = document.querySelectorAll("a[href*='/ultra/courses/']");
+  courseAnchors.forEach((anchor) => {
+    const card = anchor.closest("article, bb-base-course-card, li, div") || anchor;
+    const label = [
+      anchor.getAttribute("aria-label") || "",
+      anchor.textContent || "",
+      card && card.textContent ? card.textContent : ""
+    ].join(" ").replace(/\s+/g, " ").trim();
+    pushCandidate(card, anchor, label);
+  });
+
+  const xpathCandidates = [
+    "/html/body/div[1]/div[2]/bb-base-layout/div/main/div/section/div[2]/div[1]/div/div/div[9]/div/section[2]/div/div/*/bb-base-course-card/article",
+    "/html/body/div[1]/div[2]/bb-base-layout/div/main/div/section/div[2]/div[1]/div/div/div[9]/div/section[2]/div/div[*]/bb-base-course-card/article"
+  ];
+  xpathCandidates.forEach((expression) => {
+    try {
+      const snapshot = document.evaluate(
+        expression,
+        document,
+        null,
+        XPathResult.ORDERED_NODE_SNAPSHOT_TYPE,
+        null
+      );
+      for (let i = 0; i < snapshot.snapshotLength; i += 1) {
+        const article = snapshot.snapshotItem(i);
+        if (!article) continue;
+        const clickable = article.querySelector("a[href*='/ultra/courses/'], a[href], button") || article;
+        const label = [
+          article.getAttribute("aria-label") || "",
+          clickable.getAttribute && clickable.getAttribute("aria-label") ? clickable.getAttribute("aria-label") : "",
+          article.textContent || ""
+        ].join(" ").replace(/\s+/g, " ").trim();
+        pushCandidate(article, clickable, label);
+      }
+    } catch (_error) {
+      // Ignore invalid XPath support edge cases.
+    }
+  });
+
+  const visible = candidates.filter((candidate) => isElementLikelyVisible(candidate.node) || isElementLikelyVisible(candidate.clickable));
+  return visible.length ? visible : candidates;
+}
+
+function pickBestLearnCandidate(candidates, query) {
+  if (!candidates || !candidates.length) return null;
+  const normalizedQuery = normalizeLearnText(query);
+  if (!normalizedQuery) return null;
+
+  let best = null;
+  for (let i = 0; i < candidates.length; i += 1) {
+    const candidate = candidates[i];
+    const score = getLearnTextScore(normalizedQuery, candidate.label);
+    if (!best || score > best.score) {
+      best = { candidate, score };
+    }
+  }
+  if (!best || best.score < 0.28) {
+    return null;
+  }
+  return {
+    ...best.candidate,
+    score: Number(best.score.toFixed(3))
+  };
+}
+
+function collectLearnContentCardCandidates() {
+  const cards = document.querySelectorAll("[data-content-id], .content-list-item");
+  const results = [];
+  cards.forEach((card) => {
+    const clickable = card.querySelector(
+      "button[id^='learning-module-title-'], button[data-analytics-id*='toggleFolder'], button.ax-focusable-title, a.ax-focusable-title, a[data-analytics-id*='content.item'], button[data-analytics-id*='content.item'], a[href], button"
+    ) || card;
+    const label = [
+      clickable.getAttribute && clickable.getAttribute("aria-label") ? clickable.getAttribute("aria-label") : "",
+      clickable.textContent || "",
+      card.textContent || ""
+    ].join(" ").replace(/\s+/g, " ").trim();
+    const controlsId = clickable.getAttribute ? (clickable.getAttribute("aria-controls") || "") : "";
+    results.push({
+      card,
+      clickable,
+      label,
+      controlsId
+    });
+  });
+  return results.filter((entry) => isElementLikelyVisible(entry.card) || isElementLikelyVisible(entry.clickable));
+}
+
+async function openLearnContentCardByQuery(query) {
+  const candidates = collectLearnContentCardCandidates();
+  const chosen = pickBestLearnCandidate(
+    candidates.map((candidate) => ({
+      node: candidate.card,
+      clickable: candidate.clickable,
+      label: candidate.label
+    })),
+    query
+  );
+  if (!chosen) {
+    return { ok: false, error: `No content card matched "${query}".` };
+  }
+
+  const source = candidates.find((candidate) => candidate.card === chosen.node || candidate.clickable === chosen.clickable) || null;
+  const clickable = source ? source.clickable : chosen.clickable;
+  const controlsId = source ? source.controlsId : "";
+  const url = activateLearnElement(clickable);
+  await waitForLearnUi(500);
+
+  return {
+    ok: true,
+    card: source ? source.card : chosen.node,
+    clickable,
+    controlsId,
+    label: chosen.label,
+    url: url || ""
+  };
+}
+
+const LEARN_ASSESSMENT_CARD_XPATH = "//*[@id=\"site-wrap\"]/div[2]/section/div/div/main/div/section/div/div[2]/div/div/course-content-outline/react-course-content-outline/div/div/div[1]/div[2]/div[*]";
+const LEARN_COURSEWORK_CARD_XPATH = "/html/body/div[1]/div[2]/section/div/div/main/div/section/div/div[2]/div/div/course-content-outline/react-course-content-outline/div/div/div[1]/div[2]/div[8]/div/div[2]/div/div/div/div/div[1]/div[2]/div[*]";
+const LEARN_COURSEWORK_FINAL_CLICK_XPATH = "/html/body/div[1]/div[2]/section/div/div/main/div/section/div/div[2]/div/div/course-content-outline/react-course-content-outline/div/div/div[1]/div[2]/div[8]/div/div[2]/div/div/div/div/div[1]/div[2]/div[5]/div/div[2]/div/div/div/div/div[1]/div[2]";
+const LEARN_DEMO_DATA_SCIENCE_XPATH = "/html/body/div[1]/div[2]/bb-base-layout/div/main/div/section/div[2]/div[1]/div/div/div[9]/div/section[2]/div/div[4]/bb-base-course-card/article";
+
+function getLearnNodesByXPath(expression) {
+  try {
+    const snapshot = document.evaluate(
+      expression,
+      document,
+      null,
+      XPathResult.ORDERED_NODE_SNAPSHOT_TYPE,
+      null
+    );
+    const nodes = [];
+    for (let i = 0; i < snapshot.snapshotLength; i += 1) {
+      const node = snapshot.snapshotItem(i);
+      if (node) nodes.push(node);
+    }
+    return nodes;
+  } catch (_error) {
+    return [];
+  }
+}
+
+function getLearnNodeLabel(node) {
+  if (!node) return "";
+  return [
+    node.getAttribute && node.getAttribute("aria-label") ? node.getAttribute("aria-label") : "",
+    node.textContent || ""
+  ].join(" ").replace(/\s+/g, " ").trim();
+}
+
+function getLearnClickableNode(node) {
+  if (!node) return null;
+  if (
+    node.matches
+    && node.matches("a[href], button, [role='button'], [tabindex]")
+  ) {
+    return node;
+  }
+  if (!node.querySelector) return null;
+  return node.querySelector(
+    "button.ax-focusable-title, a.ax-focusable-title, a[data-analytics-id*='content.item'], a[data-analytics-id*='document.link'], a[href], button, [role='button'], [tabindex]"
+  );
+}
+
+function openLearnXPathCardByQuery(expression, query, fallbackKeyword = "") {
+  const nodes = getLearnNodesByXPath(expression);
+  if (!nodes.length) {
+    return { ok: false, error: `No nodes found for XPath: ${expression}` };
+  }
+
+  const normalizedQuery = normalizeLearnText(query);
+  const normalizedFallback = normalizeLearnText(fallbackKeyword);
+  let best = null;
+  for (let i = 0; i < nodes.length; i += 1) {
+    const node = nodes[i];
+    const label = getLearnNodeLabel(node);
+    const labelNormalized = normalizeLearnText(label);
+    let score = normalizedQuery ? getLearnTextScore(normalizedQuery, label) : 0;
+    if (normalizedFallback && labelNormalized.includes(normalizedFallback)) {
+      score = Math.max(score, 0.95);
+    }
+    if (!best || score > best.score) {
+      best = { node, label, score };
+    }
+  }
+
+  if (!best) {
+    return { ok: false, error: `No card matched "${query}".` };
+  }
+  if (normalizedQuery && best.score < 0.24 && normalizedFallback && !normalizeLearnText(best.label).includes(normalizedFallback)) {
+    return { ok: false, error: `No card matched "${query}" in XPath list.` };
+  }
+
+  const clickable = getLearnClickableNode(best.node) || best.node;
+  const url = activateLearnElement(clickable);
+  return {
+    ok: true,
+    node: best.node,
+    clickable,
+    label: best.label,
+    score: Number(best.score.toFixed(3)),
+    url: url || ""
+  };
+}
+
+function clickLearnNodeByXPath(expression) {
+  const nodes = getLearnNodesByXPath(expression);
+  if (!nodes.length) {
+    return { ok: false, error: `No node found for XPath: ${expression}` };
+  }
+  const targetNode = nodes[0];
+  const clickable = getLearnClickableNode(targetNode) || targetNode;
+  const url = activateLearnElement(clickable);
+  return {
+    ok: true,
+    node: targetNode,
+    clickable,
+    label: getLearnNodeLabel(targetNode),
+    url: url || ""
+  };
+}
+
+async function waitForLearnXPathNode(expression, timeoutMs = 12000, intervalMs = 250) {
+  const deadline = Date.now() + Math.max(500, Number(timeoutMs) || 12000);
+  while (Date.now() < deadline) {
+    const nodes = getLearnNodesByXPath(expression);
+    if (nodes.length) {
+      const node = nodes[0];
+      if (node && (isElementLikelyVisible(node) || !node.getBoundingClientRect)) {
+        return node;
+      }
+    }
+    await waitForLearnUi(intervalMs);
+  }
+  return null;
+}
+
+function pickFirstLearnFileLink(searchRoots) {
+  const selectors = [
+    "a[data-analytics-id*='document.link'][href]",
+    "a[href*='/outline/edit/document/'][href]",
+    "a[href*='/bbcswebdav/'][href]",
+    "a.ax-focusable-title[href]",
+    "a[href]"
+  ];
+
+  for (let i = 0; i < searchRoots.length; i += 1) {
+    const root = searchRoots[i];
+    if (!root || !root.querySelectorAll) continue;
+    for (let j = 0; j < selectors.length; j += 1) {
+      const links = root.querySelectorAll(selectors[j]);
+      for (let k = 0; k < links.length; k += 1) {
+        const link = links[k];
+        const href = parseHttpUrl(getAnchorRawHref(link));
+        if (!href) continue;
+        if (!isElementLikelyVisible(link)) continue;
+        return link;
+      }
+    }
+  }
+  return null;
+}
+
+async function resolveLearnActionFromPayload(payload) {
+  const action = String(payload && payload.action ? payload.action : "").trim();
+  if (!action) {
+    return { ok: false, error: "Missing Learn action." };
+  }
+
+  if (action === "open-course") {
+    const query = String(payload && payload.query ? payload.query : "").trim();
+    if (!query) return { ok: false, error: "Missing course query." };
+
+    const normalizedQuery = normalizeLearnText(query).replace(/\s+/g, " ").trim();
+    if (/\bdata\s*science\b/.test(normalizedQuery) || normalizedQuery.includes("datascience")) {
+      const demoNode = await waitForLearnXPathNode(LEARN_DEMO_DATA_SCIENCE_XPATH, 14000, 280);
+      if (demoNode) {
+        const demoTarget = getLearnClickableNode(demoNode) || demoNode;
+        const demoUrl = activateLearnElement(demoTarget);
+        return {
+          ok: true,
+          action,
+          query,
+          label: getLearnNodeLabel(demoNode) || "Data Science (demo hardcoded)",
+          score: 1,
+          url: demoUrl || ""
+        };
+      }
+    }
+
+    const candidates = collectLearnCourseCandidates();
+    const chosen = pickBestLearnCandidate(candidates, query);
+    if (!chosen) {
+      return { ok: false, error: `No course matched "${query}".` };
+    }
+    const clickable = chosen.clickable || chosen.node;
+    const anchor = (
+      clickable
+      && clickable.tagName
+      && clickable.tagName.toLowerCase() === "a"
+    )
+      ? clickable
+      : (
+        (clickable && clickable.closest && clickable.closest("a[href*='/ultra/courses/'], a[href]"))
+        || (chosen.node && chosen.node.querySelector ? chosen.node.querySelector("a[href*='/ultra/courses/'], a[href]") : null)
+      );
+    const anchorRawHref = anchor ? String(getAnchorRawHref(anchor) || "").trim() : "";
+    const directUrl = anchor ? parseHttpUrl(anchorRawHref) : "";
+    const anchorIsScriptLink = /^javascript:/i.test(anchorRawHref);
+    const clickTarget = directUrl
+      ? anchor
+      : ((anchor && !anchorIsScriptLink) ? anchor : clickable);
+    console.info("[aqual-learn-content]", JSON.stringify({
+      event: "open_course_click",
+      query,
+      chosenLabel: chosen.label,
+      score: chosen.score,
+      clickableTag: clickable && clickable.tagName ? clickable.tagName : "",
+      clickTargetTag: clickTarget && clickTarget.tagName ? clickTarget.tagName : "",
+      anchorHref: anchorRawHref,
+      directUrl
+    }));
+    const url = directUrl || activateLearnElement(clickTarget);
+    return {
+      ok: true,
+      action,
+      query,
+      label: chosen.label,
+      score: chosen.score,
+      url: url || ""
+    };
+  }
+
+  if (action === "open-assessments") {
+    await scrollLearnToBottom(5);
+    const query = String(payload && payload.query ? payload.query : "assessment");
+    const xpathOpened = openLearnXPathCardByQuery(LEARN_ASSESSMENT_CARD_XPATH, query, "assessment");
+    const opened = xpathOpened.ok
+      ? xpathOpened
+      : await openLearnContentCardByQuery(query);
+    if (!opened.ok) return opened;
+    return {
+      ok: true,
+      action,
+      label: opened.label,
+      url: opened.url || ""
+    };
+  }
+
+  if (action === "open-coursework") {
+    const query = String(payload && payload.query ? payload.query : "").trim();
+    if (!query) return { ok: false, error: "Missing coursework query." };
+    await scrollLearnToBottom(5);
+    const xpathOpened = openLearnXPathCardByQuery(
+      LEARN_COURSEWORK_CARD_XPATH,
+      query,
+      "coursework"
+    );
+    const opened = xpathOpened.ok
+      ? xpathOpened
+      : await openLearnContentCardByQuery(query);
+    if (!opened.ok) return opened;
+
+    await waitForLearnUi(1500);
+
+    const xpathFinal = clickLearnNodeByXPath(LEARN_COURSEWORK_FINAL_CLICK_XPATH);
+    if (xpathFinal.ok) {
+      return {
+        ok: true,
+        action,
+        label: opened.label,
+        url: xpathFinal.url || ""
+      };
+    }
+
+    const searchRoots = [];
+    if (opened.node) searchRoots.push(opened.node);
+    if (opened.card) searchRoots.push(opened.card);
+    if (opened.controlsId) {
+      const controlsEl = document.getElementById(opened.controlsId);
+      if (controlsEl) searchRoots.push(controlsEl);
+    }
+    if (opened.card && opened.card.parentElement) searchRoots.push(opened.card.parentElement);
+    if (opened.node && opened.node.parentElement) searchRoots.push(opened.node.parentElement);
+    searchRoots.push(document.body);
+
+    const firstFile = pickFirstLearnFileLink(searchRoots);
+    if (!firstFile) {
+      return {
+        ok: false,
+        error: `Opened "${opened.label}" but couldn't find a file link inside it.`
+      };
+    }
+
+    const fileUrl = activateLearnElement(firstFile);
+    return {
+      ok: true,
+      action,
+      label: opened.label,
+      url: fileUrl || parseHttpUrl(getAnchorRawHref(firstFile)) || ""
+    };
+  }
+
+  return { ok: false, error: `Unsupported Learn action "${action}".` };
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (!message) return;
   if (message.type === "aqual-google-search-action") {
@@ -1824,6 +2396,19 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       sendResponse(resolveSkyscannerProviderFromPayload(payload));
       return true;
     }
+  }
+  if (message.type === "aqual-learn-action") {
+    if (window.top !== window) {
+      return;
+    }
+    const payload = message.payload || {};
+    (async () => {
+      const result = await resolveLearnActionFromPayload(payload);
+      sendResponse(result);
+    })().catch((error) => {
+      sendResponse({ ok: false, error: error && error.message ? error.message : "Learn action failed." });
+    });
+    return true;
   }
   if (message.type === "aqual-apply") {
     applySettings(message.settings || {});
