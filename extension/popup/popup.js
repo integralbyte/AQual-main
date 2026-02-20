@@ -70,6 +70,12 @@ const COLOR_VISION_CHOICES = [
 
 const AUDIO_SERVER_HOST = "localhost:8000";
 const DOC_SERVER_BASE = "http://localhost:8080";
+const RING_HID_FILTERS = [
+  { usagePage: 0x000d, usage: 0x0032 },
+  { usagePage: 0x000d, usage: 0x0042 },
+  { usagePage: 0x000d }
+];
+const RING_HID_DEFAULT_STATUS = "Not connected. Press Connect and choose your ring.";
 
 let state = { ...DEFAULTS };
 let scrollPersistTimer = null;
@@ -258,6 +264,130 @@ function updateAudioStatus({ recording }) {
 function openMicPermissionPage() {
   const url = chrome.runtime.getURL("pages/mic-permission/mic-permission.html?auto=1");
   chrome.tabs.create({ url });
+}
+
+function toHexId(value) {
+  return Number(value || 0).toString(16).padStart(4, "0").toUpperCase();
+}
+
+function formatRingHidDeviceLabel(device) {
+  if (!device) return "ring device";
+  const name = String(device.productName || "").trim();
+  const ids = `VID ${toHexId(device.vendorId)} PID ${toHexId(device.productId)}`;
+  return name ? `${name} (${ids})` : ids;
+}
+
+function renderRingHidState(stored = {}) {
+  const statusEl = byId("ringHidStatus");
+  const connectBtn = byId("ringHidConnect");
+  const forgetBtn = byId("ringHidForget");
+  if (!statusEl || !connectBtn || !forgetBtn) return;
+
+  const enabled = Boolean(stored.aqualRingHidEnabled);
+  const statusText = String(stored.aqualRingHidStatus || "").trim();
+  const hasDevice = Boolean(stored.aqualRingHidDevice);
+
+  if (statusText) {
+    statusEl.textContent = statusText;
+  } else if (enabled && hasDevice) {
+    statusEl.textContent = `Connected: ${formatRingHidDeviceLabel(stored.aqualRingHidDevice)}`;
+  } else {
+    statusEl.textContent = RING_HID_DEFAULT_STATUS;
+  }
+
+  connectBtn.textContent = enabled ? "Reconnect ring" : "Connect ring";
+  forgetBtn.disabled = !enabled && !hasDevice;
+}
+
+function refreshRingHidState() {
+  chrome.storage.local.get({
+    aqualRingHidEnabled: false,
+    aqualRingHidDevice: null,
+    aqualRingHidStatus: ""
+  }, (stored) => {
+    renderRingHidState(stored);
+  });
+}
+
+function setRingStatusText(text) {
+  const statusEl = byId("ringHidStatus");
+  if (statusEl) {
+    statusEl.textContent = text;
+  }
+}
+
+function sendRuntimeMessage(message) {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(message, (response) => {
+      const error = chrome.runtime.lastError ? chrome.runtime.lastError.message : "";
+      resolve({ response, error });
+    });
+  });
+}
+
+async function connectRingHid() {
+  if (!navigator.hid || !navigator.hid.requestDevice) {
+    setRingStatusText("WebHID is unavailable in this browser context.");
+    return;
+  }
+
+  setRingStatusText("Choose your ring in the HID picker...");
+  let selectedDevice = null;
+  try {
+    const devices = await navigator.hid.requestDevice({ filters: RING_HID_FILTERS });
+    if (!devices || !devices.length) {
+      setRingStatusText("No ring selected.");
+      return;
+    }
+    selectedDevice = devices[0];
+  } catch (_error) {
+    setRingStatusText("Device picker closed.");
+    return;
+  }
+
+  const deviceInfo = {
+    vendorId: Number(selectedDevice.vendorId || 0),
+    productId: Number(selectedDevice.productId || 0),
+    productName: String(selectedDevice.productName || "Ring HID device")
+  };
+
+  chrome.storage.local.set({
+    aqualRingHidEnabled: true,
+    aqualRingHidDevice: deviceInfo,
+    aqualRingHidStatus: `Connecting ${formatRingHidDeviceLabel(deviceInfo)}...`
+  });
+
+  const { response, error } = await sendRuntimeMessage({
+    type: "aqual-ring-hid-connect",
+    device: deviceInfo
+  });
+
+  if (error) {
+    setRingStatusText(`Ring setup failed: ${error}`);
+    return;
+  }
+  if (!response || !response.ok) {
+    const message = (response && response.error) ? response.error : "unknown error";
+    setRingStatusText(`Ring setup failed: ${message}`);
+    return;
+  }
+
+  refreshRingHidState();
+}
+
+async function forgetRingHid() {
+  setRingStatusText("Forgetting ring...");
+  const { response, error } = await sendRuntimeMessage({ type: "aqual-ring-hid-disconnect" });
+  if (error) {
+    setRingStatusText(`Forget failed: ${error}`);
+    return;
+  }
+  if (!response || !response.ok) {
+    const message = (response && response.error) ? response.error : "unknown error";
+    setRingStatusText(`Forget failed: ${message}`);
+    return;
+  }
+  refreshRingHidState();
 }
 
 async function refreshMicPermissionState() {
@@ -634,6 +764,24 @@ function bindEvents() {
   if (permissionButton) {
     permissionButton.addEventListener("click", () => {
       openMicPermissionPage();
+    });
+  }
+
+  const ringConnectButton = byId("ringHidConnect");
+  if (ringConnectButton) {
+    ringConnectButton.addEventListener("click", () => {
+      connectRingHid().catch((error) => {
+        setRingStatusText(`Ring setup failed: ${error.message}`);
+      });
+    });
+  }
+
+  const ringForgetButton = byId("ringHidForget");
+  if (ringForgetButton) {
+    ringForgetButton.addEventListener("click", () => {
+      forgetRingHid().catch((error) => {
+        setRingStatusText(`Forget failed: ${error.message}`);
+      });
     });
   }
 
@@ -1162,6 +1310,7 @@ document.addEventListener("DOMContentLoaded", () => {
     restoreUiState();
     resizeAudioCanvas();
     refreshMicPermissionState();
+    refreshRingHidState();
   });
 
   chrome.storage.local.get({ aqualAudioMode: null }, (localStored) => {
@@ -1187,6 +1336,17 @@ document.addEventListener("DOMContentLoaded", () => {
       if (changes.aqualAudioTranscript && changes.aqualAudioTranscript.newValue) {
         setTranscriptText(changes.aqualAudioTranscript.newValue);
       }
+      if (changes.aqualRingHidEnabled || changes.aqualRingHidDevice || changes.aqualRingHidStatus) {
+        refreshRingHidState();
+      }
+    }
+    if (area === "sync" && changes.highContrastEnabled) {
+      state.highContrastEnabled = Boolean(changes.highContrastEnabled.newValue);
+      const input = byId("highContrastEnabled");
+      if (input) {
+        input.checked = state.highContrastEnabled;
+      }
+      setToggleText("highContrastEnabledState", state.highContrastEnabled);
     }
   });
 

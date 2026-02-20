@@ -208,6 +208,10 @@ let selectionSpeechBusy = false;
 let geminiLiveHost = null;
 let geminiLiveEls = null;
 let geminiLiveHideTimer = null;
+let ringEventPollTimer = null;
+let ringEventPollInFlight = false;
+let ringEventCursor = 0;
+let ringEventLastToggleAt = 0;
 
 const HIGH_CONTRAST_CURSOR_MAP = {
   "arrow-large.png": "arrow-large-white.png",
@@ -223,6 +227,9 @@ const GOOGLE_MAPS_BLOCKLIST = [
 ];
 
 const DOC_SERVER_BASE = "http://localhost:8080";
+const RING_EVENT_POLL_ENDPOINT = `${DOC_SERVER_BASE}/ring-event/poll`;
+const RING_EVENT_POLL_INTERVAL_MS = 320;
+const RING_EVENT_LOCAL_DEBOUNCE_MS = 260;
 
 function isGoogleMapsUrl() {
   const href = window.location.href;
@@ -2451,6 +2458,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 chrome.storage.sync.get(DEFAULTS, (stored) => {
   applySettings(stored || {});
+  startRingBackendPolling();
 });
 
 function clampNumber(value, min, max) {
@@ -3421,6 +3429,69 @@ function safeRuntimeMessage(payload) {
   } catch (error) {
     // Ignore runtime errors when extension context is unavailable.
   }
+}
+
+async function pollRingBackendEvents() {
+  if (ringEventPollInFlight) return;
+  if (window.top !== window) return;
+  if (document.visibilityState !== "visible") return;
+
+  ringEventPollInFlight = true;
+  try {
+    const url = `${RING_EVENT_POLL_ENDPOINT}?cursor=${encodeURIComponent(String(ringEventCursor || 0))}`;
+    const response = await fetch(url, { method: "GET", cache: "no-store" });
+    if (!response.ok) {
+      return;
+    }
+
+    const data = await response.json();
+    const nextCursor = Number(data && data.cursor);
+    const delta = Number(data && data.delta);
+    if (Number.isFinite(nextCursor) && nextCursor >= 0) {
+      ringEventCursor = nextCursor;
+    }
+    if (!Number.isFinite(delta) || delta <= 0) {
+      return;
+    }
+
+    // Each button press toggles high contrast. If we missed multiple events, parity preserves net state.
+    if (Math.abs(Math.trunc(delta)) % 2 !== 1) {
+      return;
+    }
+
+    const now = Date.now();
+    if (now - ringEventLastToggleAt < RING_EVENT_LOCAL_DEBOUNCE_MS) {
+      return;
+    }
+    ringEventLastToggleAt = now;
+    safeRuntimeMessage({ type: "aqual-ring-backend-toggle", source: "ring-event-poll" });
+  } catch (_error) {
+    // Ignore backend polling errors to keep page interaction smooth.
+  } finally {
+    ringEventPollInFlight = false;
+  }
+}
+
+function startRingBackendPolling() {
+  if (window.top !== window) return;
+  if (ringEventPollTimer) return;
+
+  pollRingBackendEvents().catch(() => {
+    // Ignore first-poll errors.
+  });
+  ringEventPollTimer = setInterval(() => {
+    pollRingBackendEvents().catch(() => {
+      // Ignore interval errors.
+    });
+  }, RING_EVENT_POLL_INTERVAL_MS);
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      pollRingBackendEvents().catch(() => {
+        // Ignore wake-up polling errors.
+      });
+    }
+  });
 }
 
 function startAudioHoldPing() {
