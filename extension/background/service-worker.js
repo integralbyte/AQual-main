@@ -47,6 +47,9 @@ function applySettingsToTab(tabId) {
 
 let liveAudioMode = null;
 let lastGoogleSearchQuery = "";
+const FLIGHT_STT_LOCATION_CORRECTIONS = [
+  { pattern: /\bthe blend\b/gi, replacement: "dublin" }
+];
 
 function parseAudioMode(mode) {
   const token = String(mode || "").toLowerCase().replace(/[\s_-]+/g, "");
@@ -656,6 +659,319 @@ function parseGoogleOpenResultIntent(text) {
     index: index || null,
     domainKeyword: domainKeyword || ""
   };
+}
+
+function isSkyscannerFlightsTabUrl(url) {
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname.toLowerCase().includes("skyscanner.")
+      && parsed.pathname.includes("/transport/flights/");
+  } catch (_error) {
+    return false;
+  }
+}
+
+function isSkyscannerConfigTabUrl(url) {
+  if (!isSkyscannerFlightsTabUrl(url)) return false;
+  try {
+    const parsed = new URL(url);
+    return parsed.pathname.includes("/config/");
+  } catch (_error) {
+    return false;
+  }
+}
+
+function normalizeClockTime(hours, minutes) {
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return "";
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return "";
+  return `${String(Math.floor(hours)).padStart(2, "0")}:${String(Math.floor(minutes)).padStart(2, "0")}`;
+}
+
+function parseSpokenNumberToken(tokens, index) {
+  const token = tokens[index];
+  if (!token) return null;
+
+  const numericMatch = token.match(/^(\d{1,3})(?:st|nd|rd|th)?$/);
+  if (numericMatch) {
+    return {
+      value: Number(numericMatch[1]),
+      consumed: 1
+    };
+  }
+
+  const normalizedToken = token === "oh" ? "zero" : token;
+  if (!(normalizedToken in NUMBER_WORDS)) {
+    return null;
+  }
+
+  let value = NUMBER_WORDS[normalizedToken];
+  let consumed = 1;
+
+  const nextToken = tokens[index + 1];
+  if (nextToken) {
+    const nextNormalized = nextToken === "oh" ? "zero" : nextToken;
+    if (nextNormalized in NUMBER_WORDS) {
+      const nextValue = NUMBER_WORDS[nextNormalized];
+      if (value >= 20 && value % 10 === 0 && nextValue >= 0 && nextValue <= 9) {
+        value += nextValue;
+        consumed = 2;
+      }
+    }
+  }
+
+  return { value, consumed };
+}
+
+function parseSkyscannerMinuteToken(tokens, index) {
+  const base = parseSpokenNumberToken(tokens, index);
+  if (!base) return null;
+
+  let value = base.value;
+  let consumed = base.consumed;
+  const next = parseSpokenNumberToken(tokens, index + consumed);
+
+  // "twenty five" -> 25
+  if (value >= 20 && value <= 50 && value % 10 === 0 && next && next.value >= 0 && next.value <= 9) {
+    value += next.value;
+    consumed += next.consumed;
+    return { value, consumed };
+  }
+
+  // "oh five" / "zero five" / "zero 5" -> 05
+  if (value >= 0 && value <= 9 && next && next.value >= 0 && next.value <= 9) {
+    value = (value * 10) + next.value;
+    consumed += next.consumed;
+    return { value, consumed };
+  }
+
+  if (value >= 0 && value <= 59) {
+    return { value, consumed };
+  }
+  return null;
+}
+
+function parseSkyscannerDepartureTime(text) {
+  const raw = String(text || "");
+  const normalized = normalizeSpeech(raw);
+  if (!normalized) return "";
+
+  const colonMatch = raw.match(/\b([0-2]?\d)\s*[:.]\s*([0-5]\d)\b/);
+  if (colonMatch) {
+    return normalizeClockTime(Number(colonMatch[1]), Number(colonMatch[2]));
+  }
+
+  const actionDetected = /\b(?:open|select|choose|click|tap|pick)\b/.test(normalized);
+  const flightContextDetected = includesAny(normalized, [
+    "flight",
+    "result",
+    "results",
+    "option",
+    "itinerary",
+    "departing",
+    "departure",
+    "leaving"
+  ]);
+
+  const compactFlightMatch = normalized.match(/\b(?:open|select|choose|click|tap|pick)\s+(?:the\s+)?([0-2]?\d)([0-5]\d)\s+flight\b/);
+  if (compactFlightMatch) {
+    const compact = normalizeClockTime(Number(compactFlightMatch[1]), Number(compactFlightMatch[2]));
+    if (compact) return compact;
+  }
+
+  const tokens = normalized.split(/\s+/).filter(Boolean);
+  let bestCandidate = null;
+
+  // Handle compact token style: "open the 1025 flight"
+  if (actionDetected && flightContextDetected) {
+    for (let i = 0; i < tokens.length; i += 1) {
+      const compactMatch = tokens[i].match(/^([0-2]?\d)([0-5]\d)$/);
+      if (!compactMatch) continue;
+      const clock = normalizeClockTime(Number(compactMatch[1]), Number(compactMatch[2]));
+      if (clock) {
+        return clock;
+      }
+    }
+  }
+
+  for (let i = 0; i < tokens.length; i += 1) {
+    const hourToken = parseSpokenNumberToken(tokens, i);
+    if (!hourToken) continue;
+    const hour = hourToken.value;
+    if (!Number.isFinite(hour) || hour < 0 || hour > 23) continue;
+
+    const minuteStart = i + hourToken.consumed;
+    const minuteToken = parseSkyscannerMinuteToken(tokens, minuteStart);
+    if (!minuteToken) continue;
+    const minute = minuteToken.value;
+    const consumed = minuteToken.consumed;
+
+    const clock = normalizeClockTime(hour, minute);
+    if (!clock) continue;
+
+    const contextStart = Math.max(0, i - 4);
+    const contextEnd = Math.min(tokens.length, minuteStart + consumed + 5);
+    const context = tokens.slice(contextStart, contextEnd).join(" ");
+    const hasFlightContext = includesAny(context, ["flight", "result", "results", "option", "itinerary", "departing", "departure", "leaving"])
+      || flightContextDetected;
+    const hasAtContext = includesAny(context, [" at ", " departing ", " departure ", " leaving "]);
+    const hasActionLead = /^(?:open|select|choose|click|tap|pick)\b/.test(normalized);
+
+    let score = 0;
+    if (hasFlightContext) score += 2;
+    if (hasAtContext) score += 1;
+    if (hasActionLead) score += 1;
+    if (i <= 4) score += 0.5;
+
+    const candidate = { clock, score };
+    if (!bestCandidate || candidate.score > bestCandidate.score) {
+      bestCandidate = candidate;
+    }
+  }
+
+  if (bestCandidate && (bestCandidate.score >= 1 || (actionDetected && flightContextDetected))) {
+    return bestCandidate.clock;
+  }
+
+  return "";
+}
+
+function parseSkyscannerResultIntent(text) {
+  const normalized = normalizeSpeech(text);
+  if (!normalized) return null;
+  const hasActionVerb = /\b(?:open|select|choose|click|tap|pick)\b/.test(normalized);
+  if (!hasActionVerb) return null;
+
+  const departureTime = parseSkyscannerDepartureTime(text);
+  if (departureTime) {
+    return { action: "resolve-flight", departureTime };
+  }
+
+  const index = parseGoogleResultIndex(normalized);
+  if (index) {
+    return { action: "resolve-flight", index };
+  }
+
+  return null;
+}
+
+function parseSkyscannerProviderIntent(text) {
+  const normalized = normalizeSpeech(text);
+  if (!normalized) return null;
+  if (!/\b(?:open|select|choose|click|tap|pick|book|use|go)\b/.test(normalized)) return null;
+  if (includesAny(normalized, ["result", "results", "option", "flight", "itinerary"])) {
+    return null;
+  }
+  if (parseSkyscannerDepartureTime(text)) {
+    return null;
+  }
+
+  const actionPattern = /\b(?:open|select|choose|click|tap|pick|book|use|go)\b(?:\s+to|\s+on|\s+with)?\s+([a-z0-9.\- ]+)/i;
+  let rawTarget = "";
+  const directMatch = normalized.match(actionPattern);
+  if (directMatch && directMatch[1]) {
+    rawTarget = directMatch[1];
+  } else {
+    const tokens = normalized.split(/\s+/).filter(Boolean);
+    const actionTokens = new Set(["open", "select", "choose", "click", "tap", "pick", "book", "use", "go"]);
+    for (let i = 0; i < tokens.length; i += 1) {
+      if (!actionTokens.has(tokens[i])) continue;
+      const tail = tokens.slice(i + 1).join(" ").trim();
+      if (tail) {
+        rawTarget = tail;
+      }
+    }
+  }
+  if (!rawTarget) return null;
+
+  const keyword = String(rawTarget || "")
+    .replace(/\b(?:the|website|site|provider|booking|offer|one)\b/g, " ")
+    .replace(/\b(?:please|can|could|you|me|now|thanks|thank)\b/g, " ")
+    .replace(/[.,!?;:]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!keyword || parseGoogleResultIndex(keyword)) {
+    return null;
+  }
+
+  return { action: "resolve-provider", providerKeyword: keyword };
+}
+
+function maybeHandleSkyscannerVoiceCommand(text) {
+  const normalized = normalizeSpeech(text);
+  if (!normalized) return false;
+
+  const resultIntent = parseSkyscannerResultIntent(text);
+  const providerIntent = parseSkyscannerProviderIntent(text);
+  if (!resultIntent && !providerIntent) {
+    return false;
+  }
+
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    const activeTab = tabs && tabs.length ? tabs[0] : null;
+    if (!activeTab || !activeTab.id || !isSkyscannerFlightsTabUrl(activeTab.url || "")) {
+      return;
+    }
+
+    const onConfigPage = isSkyscannerConfigTabUrl(activeTab.url || "");
+    const payload = onConfigPage ? providerIntent : resultIntent;
+    if (!payload) return;
+    console.info("[aqual-skyscanner-voice]", JSON.stringify({
+      event: "intent",
+      payload,
+      tabUrl: activeTab.url || "",
+      onConfigPage
+    }));
+
+    chrome.tabs.sendMessage(
+      activeTab.id,
+      { type: "aqual-skyscanner-action", payload },
+      { frameId: 0 },
+      (response) => {
+        if (chrome.runtime.lastError || !response || !response.ok || !response.url) {
+          console.warn("[aqual-skyscanner-voice]", JSON.stringify({
+            event: "resolve_failed",
+            error: chrome.runtime.lastError ? chrome.runtime.lastError.message : "",
+            response: response || null,
+            payload
+          }));
+          return;
+        }
+
+        const targetUrl = parseAbsoluteHttpUrl(response.url);
+        if (!targetUrl) {
+          console.warn("[aqual-skyscanner-voice]", JSON.stringify({
+            event: "invalid_url",
+            responseUrl: response.url,
+            payload
+          }));
+          return;
+        }
+
+        const now = Date.now();
+        if (lastVoiceCommand.key === targetUrl && now - lastVoiceCommand.timestamp < 4000) {
+          return;
+        }
+        lastVoiceCommand = { key: targetUrl, timestamp: now };
+
+        if (payload.action === "resolve-provider") {
+          chrome.tabs.create({
+            url: targetUrl,
+            active: true,
+            openerTabId: activeTab.id
+          });
+          return;
+        }
+
+        chrome.tabs.update(activeTab.id, { url: targetUrl });
+      }
+    );
+  });
+
+  // Keep routing active so Google-specific intent parsing can still run in parallel
+  // when the current tab is not a Skyscanner flights page.
+  return false;
 }
 
 function maybeHandleGoogleSearchVoiceCommand(text) {
@@ -2145,6 +2461,21 @@ function maybeHandleVisualVoiceCommand(text) {
   return true;
 }
 
+function applyFlightSpeechCorrections(text) {
+  let corrected = String(text || "");
+  FLIGHT_STT_LOCATION_CORRECTIONS.forEach((entry) => {
+    corrected = corrected.replace(entry.pattern, entry.replacement);
+  });
+  return corrected;
+}
+
+function normalizeFlightLocationAlias(location) {
+  const normalized = normalizeSpeech(location || "");
+  if (!normalized) return String(location || "").trim();
+  if (normalized === "the blend") return "dublin";
+  return String(location).trim();
+}
+
 function findLocations(text) {
   const normalized = normalizeSpeech(text);
   if (!normalized) return [];
@@ -2160,6 +2491,7 @@ function findLocations(text) {
 // Hardcoded country codes for Skyscanner
 const SKYSCANNER_COUNTRY_CODES = {
   "edinburgh": "edi",
+  "dublin": "dub",
   "london": "lon",
   "manchester": "man",
   "new york": "nyc",
@@ -2532,6 +2864,156 @@ const ORDINAL_WORDS = {
   "thirtyfirst": 31
 };
 
+const DATE_MONTH_KEYS_SORTED = Object.keys(MONTH_MAP).sort((a, b) => b.length - a.length);
+const DATE_ORDINAL_KEYS_SORTED = Object.keys(ORDINAL_WORDS).sort((a, b) => b.length - a.length);
+const DATE_CARDINAL_WORDS = {
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+  eleven: 11,
+  twelve: 12,
+  thirteen: 13,
+  fourteen: 14,
+  fifteen: 15,
+  sixteen: 16,
+  seventeen: 17,
+  eighteen: 18,
+  nineteen: 19,
+  twenty: 20,
+  "twenty one": 21,
+  "twenty two": 22,
+  "twenty three": 23,
+  "twenty four": 24,
+  "twenty five": 25,
+  "twenty six": 26,
+  "twenty seven": 27,
+  "twenty eight": 28,
+  "twenty nine": 29,
+  thirty: 30,
+  "thirty one": 31
+};
+const DATE_CARDINAL_KEYS_SORTED = Object.keys(DATE_CARDINAL_WORDS).sort((a, b) => b.length - a.length);
+const DATE_MONTH_REGEX_SOURCE = DATE_MONTH_KEYS_SORTED
+  .map((key) => escapeRegExp(key))
+  .join("|");
+const DATE_ORDINAL_REGEX_SOURCE = DATE_ORDINAL_KEYS_SORTED
+  .map((key) => escapeRegExp(key).replace(/\\-/g, "[-\\s]?").replace(/\s+/g, "\\s+"))
+  .join("|");
+const DATE_CARDINAL_REGEX_SOURCE = DATE_CARDINAL_KEYS_SORTED
+  .map((key) => escapeRegExp(key).replace(/\s+/g, "\\s+"))
+  .join("|");
+
+function normalizeDateTextInput(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]/g, "-")
+    .replace(/(\d{1,2})(st|nd|rd|th)\b/g, "$1")
+    .replace(/\.(?=\s|$)/g, " ")
+    .replace(/[,]/g, " ")
+    .replace(/[^a-z0-9\s/.\-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeDateWordText(value) {
+  return String(value || "")
+    .replace(/-/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractMonthFromDateText(normalizedDateText) {
+  for (let i = 0; i < DATE_MONTH_KEYS_SORTED.length; i += 1) {
+    const key = DATE_MONTH_KEYS_SORTED[i];
+    const pattern = new RegExp(`(?:^|\\s)${escapeRegExp(key)}(?=\\s|$)`);
+    if (pattern.test(normalizedDateText)) {
+      return MONTH_MAP[key];
+    }
+  }
+  return null;
+}
+
+function extractOrdinalDayFromDateText(normalizedDateText) {
+  const text = normalizeDateWordText(normalizedDateText);
+  for (let i = 0; i < DATE_ORDINAL_KEYS_SORTED.length; i += 1) {
+    const key = DATE_ORDINAL_KEYS_SORTED[i];
+    const normalizedKey = normalizeDateWordText(key);
+    const pattern = new RegExp(`(?:^|\\s)${escapeRegExp(normalizedKey)}(?=\\s|$)`);
+    if (pattern.test(text)) {
+      return ORDINAL_WORDS[key];
+    }
+  }
+  return null;
+}
+
+function extractCardinalDayFromDateText(normalizedDateText) {
+  const text = normalizeDateWordText(normalizedDateText);
+  for (let i = 0; i < DATE_CARDINAL_KEYS_SORTED.length; i += 1) {
+    const key = DATE_CARDINAL_KEYS_SORTED[i];
+    const pattern = new RegExp(`(?:^|\\s)${escapeRegExp(key)}(?=\\s|$)`);
+    if (pattern.test(text)) {
+      return DATE_CARDINAL_WORDS[key];
+    }
+  }
+  return null;
+}
+
+function extractNumericDayFromDateText(normalizedDateText) {
+  const dayBeforeMonth = normalizedDateText.match(
+    new RegExp(`\\b(\\d{1,2})\\s*(?:of\\s+)?(?:${DATE_MONTH_REGEX_SOURCE})\\b`, "i")
+  );
+  if (dayBeforeMonth) {
+    const value = Number(dayBeforeMonth[1]);
+    if (value >= 1 && value <= 31) {
+      return value;
+    }
+  }
+
+  const monthBeforeDay = normalizedDateText.match(
+    new RegExp(`\\b(?:${DATE_MONTH_REGEX_SOURCE})\\s+(\\d{1,2})\\b`, "i")
+  );
+  if (monthBeforeDay) {
+    const value = Number(monthBeforeDay[1]);
+    if (value >= 1 && value <= 31) {
+      return value;
+    }
+  }
+
+  const allNumericTokens = normalizedDateText.match(/\b\d{1,4}\b/g) || [];
+  for (let i = 0; i < allNumericTokens.length; i += 1) {
+    const value = Number(allNumericTokens[i]);
+    if (value >= 1 && value <= 31) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function extractTwoDigitYearFromDateText(normalizedDateText) {
+  const fourDigit = normalizedDateText.match(/\b(19|20)\d{2}\b/);
+  if (fourDigit) {
+    return Number(String(fourDigit[0]).slice(-2));
+  }
+  const twoDigit = normalizedDateText.match(/\b(\d{2})\b/g);
+  if (!twoDigit || !twoDigit.length) {
+    return 26;
+  }
+  for (let i = 0; i < twoDigit.length; i += 1) {
+    const value = Number(twoDigit[i]);
+    if (value >= 24 && value <= 99) {
+      return value;
+    }
+  }
+  return 26;
+}
+
 function getCountryCode(country) {
   const lower = country.toLowerCase().trim();
   if (SKYSCANNER_COUNTRY_CODES[lower]) {
@@ -2542,8 +3024,19 @@ function getCountryCode(country) {
 }
 
 function parseDate(dateStr) {
-  const lower = dateStr.toLowerCase().trim();
+  const normalizedInput = normalizeDateTextInput(dateStr);
+  const lower = normalizedInput.toLowerCase().trim();
   let day = null;
+
+  const yearFirstMatch = lower.match(/\b((?:19|20)\d{2})[\/\-.](\d{1,2})[\/\-.](\d{1,2})\b/);
+  if (yearFirstMatch) {
+    const year = Number(String(yearFirstMatch[1]).slice(-2));
+    const month = Number(yearFirstMatch[2]);
+    const date = Number(yearFirstMatch[3]);
+    if (month >= 1 && month <= 12 && date >= 1 && date <= 31) {
+      return `${String(year).padStart(2, "0")}${String(month).padStart(2, "0")}${String(date).padStart(2, "0")}`;
+    }
+  }
 
   const numericMatch = lower.match(/(\d{1,2})[\/\-.](\d{1,2})(?:[\/\-.](\d{2,4}))?/);
   if (numericMatch) {
@@ -2570,64 +3063,66 @@ function parseDate(dateStr) {
     }
   }
 
-  // First try to extract day number (handles 1st, 2nd, 3rd, 21st, 22nd, 23rd, etc.)
-  const dayMatch = dateStr.match(/(\d{1,2})(?:st|nd|rd|th)?/i);
-  if (dayMatch) {
-    day = dayMatch[1];
+  const ordinalDay = extractOrdinalDayFromDateText(lower);
+  if (ordinalDay) {
+    day = ordinalDay;
   } else {
-    // Try ordinal words (first, second, fifth, etc.)
-    for (const [word, num] of Object.entries(ORDINAL_WORDS)) {
-      if (lower.includes(word)) {
-        day = num.toString();
-        break;
+    const cardinalDay = extractCardinalDayFromDateText(lower);
+    if (cardinalDay) {
+      day = cardinalDay;
+    } else {
+      const numericDay = extractNumericDayFromDateText(lower);
+      if (numericDay !== null && numericDay !== undefined) {
+        day = numericDay;
       }
     }
   }
 
   if (!day) return null;
-  day = day.padStart(2, "0");
+  day = String(day).padStart(2, "0");
 
-  // Extract month (month-first or day-first)
-  let month = null;
-  const monthFirst = lower.match(new RegExp(`\\b(${Object.keys(MONTH_MAP).join("|")})\\b`));
-  if (monthFirst) {
-    month = MONTH_MAP[monthFirst[1]];
-  } else {
-    for (const [name, num] of Object.entries(MONTH_MAP)) {
-      if (lower.includes(name)) {
-        month = num;
-        break;
-      }
-    }
-  }
+  const month = extractMonthFromDateText(lower);
   if (!month) return null;
 
-  // Use 2026 as default year
-  return `26${month}${day}`;
+  const year = String(extractTwoDigitYearFromDateText(lower)).padStart(2, "0");
+  return `${year}${month}${day}`;
 }
 
 function extractDates(text) {
+  const normalizedText = normalizeDateTextInput(text);
   const matches = [];
-  const monthNames = Object.keys(MONTH_MAP).join("|");
-  const ordinalWords = Object.keys(ORDINAL_WORDS).join("|");
+  const monthNames = DATE_MONTH_REGEX_SOURCE;
+  const ordinalWords = DATE_ORDINAL_REGEX_SOURCE;
+  const cardinalWords = DATE_CARDINAL_REGEX_SOURCE;
   const patterns = [
-    new RegExp(`\\b(${ordinalWords}|\\d{1,2}(?:st|nd|rd|th)?)\\s*(?:of\\s+)?(${monthNames})\\b`, "gi"),
+    new RegExp(`\\b(${ordinalWords}|${cardinalWords}|\\d{1,2}(?:st|nd|rd|th)?)\\s*(?:of\\s+)?(${monthNames})\\b`, "gi"),
     new RegExp(`\\b(${monthNames})\\s*(\\d{1,2}(?:st|nd|rd|th)?)\\b`, "gi"),
-    new RegExp(`\\b\\d{1,2}[\\/\\-.]\\d{1,2}(?:[\\/\\-.]\\d{2,4})?\\b`, "g")
+    new RegExp(`\\b\\d{1,2}[\\/\\-.]\\d{1,2}(?:[\\/\\-.]\\d{2,4})?\\b`, "g"),
+    new RegExp(`\\b(?:${monthNames})\\s+\\d{1,2}(?:st|nd|rd|th)?(?:\\s*,?\\s*(?:19|20)\\d{2})?\\b`, "gi"),
+    new RegExp(`\\b\\d{1,2}(?:st|nd|rd|th)?\\s+(?:of\\s+)?(?:${monthNames})(?:\\s*,?\\s*(?:19|20)\\d{2})?\\b`, "gi"),
+    new RegExp(`\\b(?:${monthNames})\\s+(${ordinalWords}|${cardinalWords})\\b`, "gi"),
+    new RegExp(`\\b(${ordinalWords}|${cardinalWords})\\s+(?:of\\s+)?(?:${monthNames})\\b`, "gi")
   ];
 
   patterns.forEach((pattern) => {
     let match;
-    while ((match = pattern.exec(text)) !== null) {
+    while ((match = pattern.exec(normalizedText)) !== null) {
       matches.push({ raw: match[0], index: match.index });
     }
   });
 
   matches.sort((a, b) => a.index - b.index);
   const results = [];
+  const seen = new Set();
   for (const candidate of matches) {
     const parsed = parseDate(candidate.raw);
     if (parsed) {
+      const normalizedRaw = normalizeDateTextInput(candidate.raw);
+      const dedupeKey = `${candidate.index}:${normalizedRaw}`;
+      if (seen.has(dedupeKey)) {
+        continue;
+      }
+      seen.add(dedupeKey);
       results.push({ raw: candidate.raw, parsed });
     }
   }
@@ -2700,25 +3195,34 @@ function isFlightIntent(text) {
 }
 
 function extractFlightBooking(text, selectedCountry) {
+  const correctedText = applyFlightSpeechCorrections(text)
+    .replace(/[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]/g, "-");
+
   // Check for flight intent with tolerant phrasing
-  if (!isFlightIntent(text)) return null;
+  if (!isFlightIntent(correctedText)) return null;
 
   let origin = null;
   let destination = null;
   let departDate = null;
   let returnDate = null;
 
-  const monthNames = "january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec";
-  const ordinalWords = "first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|twenty[- ]?first|twenty[- ]?second|twenty[- ]?third|twenty[- ]?fourth|twenty[- ]?fifth|twenty[- ]?sixth|twenty[- ]?seventh|twenty[- ]?eighth|twenty[- ]?ninth|thirtieth|thirty[- ]?first";
-  const dayPattern = `(?:\\d{1,2}(?:st|nd|rd|th)?|${ordinalWords})`;
+  const routePattern = /from\s+(.+?)\s+to\s+(.+?)(?=\s+(?:from|for|on|departing|leaving|returning)\b|$)/i;
+  const routeMatch = correctedText.match(routePattern);
+  if (routeMatch) {
+    origin = routeMatch[1].trim();
+    destination = routeMatch[2].trim();
+  }
+
+  const monthNames = DATE_MONTH_REGEX_SOURCE;
+  const dayPattern = `(?:\\d{1,2}(?:st|nd|rd|th)?|${DATE_ORDINAL_REGEX_SOURCE}|${DATE_CARDINAL_REGEX_SOURCE})`;
   const datePattern = new RegExp(`from\\s+(?:the\\s+)?(${dayPattern}\\s+(?:of\\s+)?(?:${monthNames}))\\s+to\\s+(?:the\\s+)?(${dayPattern}\\s+(?:of\\s+)?(?:${monthNames}))`, "i");
-  const dateMatch = text.match(datePattern);
+  const dateMatch = correctedText.match(datePattern);
 
   if (dateMatch) {
     departDate = dateMatch[1].trim();
     returnDate = dateMatch[2].trim();
 
-    const beforeDates = text.slice(0, dateMatch.index).trim();
+    const beforeDates = correctedText.slice(0, dateMatch.index).trim();
 
     const fullPattern = /from\s+(.+?)\s+to\s+(.+?)$/i;
     const fullMatch = beforeDates.match(fullPattern);
@@ -2738,9 +3242,9 @@ function extractFlightBooking(text, selectedCountry) {
         destination = selectedCountry || null;
       }
     }
-  } else {
+  } else if (!origin || !destination) {
     const fromToPattern = /from\s+(.+?)\s+to\s+(.+?)\s+from\s+(.+?)\s+to\s+(.+?)(?:\.|$)/i;
-    const match = text.match(fromToPattern);
+    const match = correctedText.match(fromToPattern);
 
     if (match) {
       const firstFrom = match[1].trim().toLowerCase();
@@ -2759,7 +3263,7 @@ function extractFlightBooking(text, selectedCountry) {
       }
     } else {
       const toFromPattern = /to\s+(.+?)\s+from\s+(.+?)\s+to\s+(.+?)(?:\.|$)/i;
-      const toFromMatch = text.match(toFromPattern);
+      const toFromMatch = correctedText.match(toFromPattern);
 
       if (toFromMatch) {
         origin = "edinburgh";
@@ -2775,7 +3279,7 @@ function extractFlightBooking(text, selectedCountry) {
   }
 
   if (!destination || !origin) {
-    const locations = findLocations(text);
+    const locations = findLocations(correctedText);
     if (!origin && locations.length > 0) {
       origin = locations[0];
     }
@@ -2791,8 +3295,11 @@ function extractFlightBooking(text, selectedCountry) {
     origin = "edinburgh";
   }
 
+  origin = normalizeFlightLocationAlias(origin);
+  destination = normalizeFlightLocationAlias(destination);
+
   if (!destination || !departDate || !returnDate) {
-    const dateCandidates = extractDates(text);
+    const dateCandidates = extractDates(correctedText);
     if (dateCandidates.length >= 2) {
       departDate = dateCandidates[0].raw;
       returnDate = dateCandidates[1].raw;
@@ -2866,6 +3373,7 @@ function sendAudioControlMessage(payload, retryCount = 2) {
 
 function maybeHandleVoiceCommand(text) {
   if (!text) return;
+  maybeHandleSkyscannerVoiceCommand(text);
   if (maybeHandleGoogleSearchVoiceCommand(text)) {
     return;
   }
