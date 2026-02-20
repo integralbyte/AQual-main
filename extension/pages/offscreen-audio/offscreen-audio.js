@@ -27,6 +27,7 @@ let geminiLiveStreamPlaybackNextTime = 0;
 let geminiLiveStreamPlaybackStarted = false;
 let geminiLiveStreamPlaybackSources = new Set();
 let geminiLiveStreamPlaybackTurnId = 0;
+let geminiLiveOutputSuppressMicUntil = 0;
 
 const GEMINI_LIVE_STREAM_INPUT_SAMPLE_RATE = 16000;
 const GEMINI_LIVE_OUTPUT_SAMPLE_RATE = 24000;
@@ -134,6 +135,7 @@ function stopGeminiLiveStreamPlaybackQueue() {
   geminiLiveStreamPlaybackNextTime = 0;
   geminiLiveStreamPlaybackStarted = false;
   geminiLiveStreamPlaybackTurnId = 0;
+  geminiLiveOutputSuppressMicUntil = 0;
 }
 
 function enqueueGeminiLiveOutputAudioChunk(
@@ -174,6 +176,11 @@ function enqueueGeminiLiveOutputAudioChunk(
   if (frameCount <= 0) {
     return;
   }
+  const chunkDurationMs = Math.max(20, Math.round((frameCount / sampleRate) * 1000));
+  geminiLiveOutputSuppressMicUntil = Math.max(
+    geminiLiveOutputSuppressMicUntil,
+    Date.now() + chunkDurationMs + 260
+  );
 
   const view = new DataView(bytes.buffer, bytes.byteOffset, frameCount * 2);
   const buffer = playbackContext.createBuffer(1, frameCount, sampleRate);
@@ -585,6 +592,9 @@ async function startGeminiLiveStream(sessionIdRaw, contextPayload = null) {
       if (!geminiLiveStreamActive || geminiLiveStreamSessionId !== sessionId || !audioContext) return;
       if (geminiLiveStreamPlaybackSources.size > 0) {
         // Avoid feedback self-interruption that cuts off assistant speech.
+        return;
+      }
+      if (Date.now() < geminiLiveOutputSuppressMicUntil) {
         return;
       }
       const ws = audioWs;

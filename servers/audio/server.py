@@ -74,7 +74,7 @@ def _get_env_float(name: str, default: float, minimum=None, maximum=None) -> flo
 
 
 GEMINI_LIVE_THINKING_BUDGET = _get_env_int("GEMINI_LIVE_THINKING_BUDGET", 0, minimum=0, maximum=32768)
-GEMINI_LIVE_MAX_OUTPUT_TOKENS = _get_env_int("GEMINI_LIVE_MAX_OUTPUT_TOKENS", 320, minimum=256, maximum=2048)
+GEMINI_LIVE_MAX_OUTPUT_TOKENS = _get_env_int("GEMINI_LIVE_MAX_OUTPUT_TOKENS", 512, minimum=0, maximum=2048)
 GEMINI_LIVE_TEMPERATURE = _get_env_float("GEMINI_LIVE_TEMPERATURE", 0.1, minimum=0.0, maximum=2.0)
 GEMINI_LIVE_INPUT_SAMPLE_RATE = _get_env_int("GEMINI_LIVE_INPUT_SAMPLE_RATE", 16000, minimum=8000, maximum=48000)
 GEMINI_LIVE_AAD_PREFIX_PADDING_MS = _get_env_int("GEMINI_LIVE_AAD_PREFIX_PADDING_MS", 120, minimum=0, maximum=2000)
@@ -398,21 +398,23 @@ async def websocket_gemini_live(websocket: WebSocket):
         prefix_padding_ms=GEMINI_LIVE_AAD_PREFIX_PADDING_MS,
         silence_duration_ms=GEMINI_LIVE_AAD_SILENCE_DURATION_MS,
     )
-    config = types.LiveConnectConfig(
-        response_modalities=["AUDIO"],
-        temperature=GEMINI_LIVE_TEMPERATURE,
-        max_output_tokens=GEMINI_LIVE_MAX_OUTPUT_TOKENS,
-        thinking_config=types.ThinkingConfig(thinking_budget=GEMINI_LIVE_THINKING_BUDGET),
-        realtime_input_config=types.RealtimeInputConfig(
+    config_kwargs = {
+        "response_modalities": ["AUDIO"],
+        "temperature": GEMINI_LIVE_TEMPERATURE,
+        "thinking_config": types.ThinkingConfig(thinking_budget=GEMINI_LIVE_THINKING_BUDGET),
+        "realtime_input_config": types.RealtimeInputConfig(
             automatic_activity_detection=aad_config,
         ),
-        system_instruction=(
+        "system_instruction": (
             "You are AQual, an accessibility assistant. "
             "Respond naturally in English. "
             "Keep spoken replies short and direct. "
             "Only describe the current page if the user explicitly asks about it."
         ),
-    )
+    }
+    if GEMINI_LIVE_MAX_OUTPUT_TOKENS > 0:
+        config_kwargs["max_output_tokens"] = GEMINI_LIVE_MAX_OUTPUT_TOKENS
+    config = types.LiveConnectConfig(**config_kwargs)
 
     async def safe_send(payload):
         try:
@@ -490,7 +492,11 @@ async def websocket_gemini_live(websocket: WebSocket):
 
                 async def send_audio_blob(blob_bytes: bytes):
                     nonlocal had_user_audio_since_turn, had_local_speech_since_turn, first_voice_activity_seen
+                    nonlocal responding_state_sent
                     if not blob_bytes:
+                        return True
+                    if responding_state_sent:
+                        # Prevent accidental self-interruption while assistant audio is streaming.
                         return True
                     # Snapshot/page context must be sent before first audio of the turn;
                     # sending context mid-turn can interrupt or truncate model speech.
