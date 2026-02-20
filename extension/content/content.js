@@ -1532,6 +1532,273 @@ function resolveGoogleSearchResultFromPayload(payload) {
   };
 }
 
+function isSkyscannerHost(hostname) {
+  return String(hostname || "").toLowerCase().includes("skyscanner.");
+}
+
+function parseSkyscannerConfigUrl(rawUrl) {
+  const absolute = parseHttpUrl(rawUrl);
+  if (!absolute) return "";
+  try {
+    const parsed = new URL(absolute);
+    if (!isSkyscannerHost(parsed.hostname)) return "";
+    if (!parsed.pathname.includes("/transport/flights/")) return "";
+    if (!parsed.pathname.includes("/config/")) return "";
+    return parsed.href;
+  } catch (_error) {
+    return "";
+  }
+}
+
+function normalizeClockTime(rawTime) {
+  const match = String(rawTime || "").match(/([0-2]?\d)\s*[:.]\s*([0-5]\d)/);
+  if (!match) return "";
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return "";
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return "";
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+function extractDepartureTimeFromText(rawText) {
+  const text = String(rawText || "").replace(/\s+/g, " ").trim();
+  if (!text) return "";
+
+  const departingMatch = text.match(/departing(?:[^0-9]{0,160})at\s*([0-2]?\d[:.][0-5]\d)/i);
+  if (departingMatch && departingMatch[1]) {
+    const normalized = normalizeClockTime(departingMatch[1]);
+    if (normalized) return normalized;
+  }
+
+  const anyTimes = text.match(/\b([0-2]?\d[:.][0-5]\d)\b/g);
+  if (anyTimes && anyTimes.length) {
+    return normalizeClockTime(anyTimes[0]);
+  }
+  return "";
+}
+
+function collectSkyscannerFlightCandidates() {
+  const anchors = document.querySelectorAll("a[href*='/transport/flights/'][href*='/config/']");
+  const seen = new Set();
+  const candidates = [];
+
+  anchors.forEach((anchor) => {
+    if (!anchor || !anchor.getAttribute) return;
+    if (anchor.closest("[data-testid='PricingItem']")) return;
+
+    const configUrl = parseSkyscannerConfigUrl(getAnchorRawHref(anchor));
+    if (!configUrl || seen.has(configUrl)) return;
+    seen.add(configUrl);
+
+    const ticket = anchor.closest("[data-testid='ticket']") || anchor.closest("article") || anchor.closest("li");
+    const combinedText = [
+      anchor.getAttribute("aria-label") || "",
+      anchor.textContent || "",
+      ticket && ticket.getAttribute ? (ticket.getAttribute("aria-label") || "") : "",
+      ticket && ticket.textContent ? ticket.textContent : ""
+    ].join(" ").replace(/\s+/g, " ").trim();
+
+    const optionMatch = combinedText.match(/\bflight option\s+(\d+)\b/i);
+    const optionIndex = optionMatch ? Number(optionMatch[1]) : null;
+    const departureTime = extractDepartureTimeFromText(combinedText);
+
+    candidates.push({
+      url: configUrl,
+      departureTime,
+      optionIndex: Number.isFinite(optionIndex) ? optionIndex : null
+    });
+  });
+
+  return candidates;
+}
+
+function resolveSkyscannerFlightFromPayload(payload) {
+  const candidates = collectSkyscannerFlightCandidates();
+  if (!candidates.length) {
+    return { ok: false, error: "No Skyscanner flight results were found on this page." };
+  }
+
+  const requestedTime = normalizeClockTime(payload && payload.departureTime);
+  if (requestedTime) {
+    const compactTime = requestedTime.replace(":", "");
+    const timed = candidates.find((candidate) => (
+      candidate.departureTime === requestedTime
+      || String(candidate.url || "").includes(compactTime)
+    ));
+    if (timed) {
+      return {
+        ok: true,
+        url: timed.url,
+        departureTime: requestedTime
+      };
+    }
+    return { ok: false, error: `No flight departing at ${requestedTime} was found.` };
+  }
+
+  let index = Number(payload && payload.index);
+  if (!Number.isFinite(index) || index <= 0) {
+    index = 1;
+  }
+  index = Math.floor(index);
+  if (index > candidates.length) {
+    index = candidates.length;
+  }
+
+  const chosen = candidates[index - 1];
+  if (!chosen) {
+    return { ok: false, error: "No matching Skyscanner result index was found." };
+  }
+  return {
+    ok: true,
+    url: chosen.url,
+    index,
+    total: candidates.length
+  };
+}
+
+function collectSkyscannerProviderCandidates() {
+  const links = document.querySelectorAll(
+    "a[data-testid='pricing-item-redirect-button'][href], a[aria-label^='Select '][href]"
+  );
+  const seen = new Set();
+  const candidates = [];
+
+  links.forEach((link, idx) => {
+    const url = parseHttpUrl(getAnchorRawHref(link));
+    if (!url || seen.has(url)) return;
+    seen.add(url);
+
+    const item = link.closest("[data-testid='PricingItem']") || link.closest("article") || link.closest("li");
+    const providerTextNode = item ? item.querySelector("h3, p") : null;
+    const providerName = String(providerTextNode && providerTextNode.textContent ? providerTextNode.textContent : "")
+      .replace(/\s+/g, " ")
+      .trim();
+    const ariaName = String(link.getAttribute("aria-label") || "")
+      .replace(/^select\s+/i, "")
+      .replace(/[.]+$/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    let domain = "";
+    try {
+      domain = new URL(url).hostname.toLowerCase().replace(/^www\./, "");
+    } catch (_error) {
+      domain = "";
+    }
+
+    candidates.push({
+      url,
+      domain,
+      providerName: providerName || ariaName || "",
+      label: `${providerName} ${ariaName}`.replace(/\s+/g, " ").trim().toLowerCase(),
+      index: idx + 1
+    });
+  });
+
+  return candidates;
+}
+
+function resolveSkyscannerProviderFromPayload(payload) {
+  const candidates = collectSkyscannerProviderCandidates();
+  if (!candidates.length) {
+    return { ok: false, error: "No booking provider links were found on this page." };
+  }
+
+  const providerKeywordRaw = (payload && payload.providerKeyword ? String(payload.providerKeyword) : "").toLowerCase().trim();
+  if (!providerKeywordRaw) {
+    return { ok: false, error: "No provider keyword was provided." };
+  }
+
+  const collapsedKeyword = providerKeywordRaw.replace(/[^a-z0-9.-]/g, "");
+  const tokenKeywords = providerKeywordRaw
+    .split(/\s+/)
+    .map((token) => token.replace(/[^a-z0-9.-]/g, ""))
+    .filter((token) => token.length >= 2);
+
+  const direct = candidates.find((candidate) => {
+    const providerCollapsed = candidate.providerName.toLowerCase().replace(/[^a-z0-9.-]/g, "");
+    const domainCollapsed = candidate.domain.replace(/[^a-z0-9.-]/g, "");
+    const labelCollapsed = candidate.label.replace(/[^a-z0-9.-]/g, "");
+    const urlLower = candidate.url.toLowerCase();
+    if (
+      collapsedKeyword
+      && (
+        providerCollapsed.includes(collapsedKeyword)
+        || domainCollapsed.includes(collapsedKeyword)
+        || labelCollapsed.includes(collapsedKeyword)
+        || urlLower.includes(collapsedKeyword)
+      )
+    ) {
+      return true;
+    }
+    if (!tokenKeywords.length) return false;
+    return tokenKeywords.every((token) => (
+      providerCollapsed.includes(token)
+      || domainCollapsed.includes(token)
+      || labelCollapsed.includes(token)
+      || urlLower.includes(token)
+    ));
+  });
+
+  if (direct) {
+    return {
+      ok: true,
+      url: direct.url,
+      provider: direct.providerName,
+      domain: direct.domain
+    };
+  }
+
+  let best = null;
+  for (let i = 0; i < candidates.length; i += 1) {
+    const candidate = candidates[i];
+    const providerCollapsed = candidate.providerName.toLowerCase().replace(/[^a-z0-9.-]/g, "");
+    const domainCollapsed = candidate.domain.replace(/[^a-z0-9.-]/g, "");
+    const domainStem = getDomainStem(candidate.domain);
+    const labelCollapsed = candidate.label.replace(/[^a-z0-9.-]/g, "");
+
+    let score = Math.max(
+      similarityScore(providerKeywordRaw, providerCollapsed),
+      similarityScore(providerKeywordRaw, domainCollapsed),
+      similarityScore(providerKeywordRaw, domainStem),
+      similarityScore(providerKeywordRaw, labelCollapsed)
+    );
+
+    if (tokenKeywords.length) {
+      let tokenHits = 0;
+      for (let j = 0; j < tokenKeywords.length; j += 1) {
+        const token = tokenKeywords[j];
+        if (
+          providerCollapsed.includes(token)
+          || domainCollapsed.includes(token)
+          || domainStem.includes(token)
+          || labelCollapsed.includes(token)
+          || candidate.url.toLowerCase().includes(token)
+        ) {
+          tokenHits += 1;
+        }
+      }
+      score = Math.max(score, tokenHits / tokenKeywords.length);
+    }
+
+    if (!best || score > best.score) {
+      best = { candidate, score };
+    }
+  }
+
+  if (best && best.score >= 0.28) {
+    return {
+      ok: true,
+      url: best.candidate.url,
+      provider: best.candidate.providerName,
+      domain: best.candidate.domain,
+      similarity: Number(best.score.toFixed(3))
+    };
+  }
+
+  return { ok: false, error: `No provider matched "${providerKeywordRaw}".` };
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (!message) return;
   if (message.type === "aqual-google-search-action") {
@@ -1541,6 +1808,20 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     const payload = message.payload || {};
     if (payload.action === "resolve-result") {
       sendResponse(resolveGoogleSearchResultFromPayload(payload));
+      return true;
+    }
+  }
+  if (message.type === "aqual-skyscanner-action") {
+    if (window.top !== window) {
+      return;
+    }
+    const payload = message.payload || {};
+    if (payload.action === "resolve-flight") {
+      sendResponse(resolveSkyscannerFlightFromPayload(payload));
+      return true;
+    }
+    if (payload.action === "resolve-provider") {
+      sendResponse(resolveSkyscannerProviderFromPayload(payload));
       return true;
     }
   }
