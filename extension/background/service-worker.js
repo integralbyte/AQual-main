@@ -50,6 +50,7 @@ let lastGoogleSearchQuery = "";
 const FLIGHT_STT_LOCATION_CORRECTIONS = [
   { pattern: /\bthe blend\b/gi, replacement: "dublin" }
 ];
+const LEARN_HOME_URL = "https://www.learn.ed.ac.uk";
 
 function parseAudioMode(mode) {
   const token = String(mode || "").toLowerCase().replace(/[\s_-]+/g, "");
@@ -103,6 +104,7 @@ let holdLastTranscriptAt = 0;
 let holdRecordStopped = false;
 let holdFinalizeTimer = null;
 let holdStopTimer = null;
+let pendingLearnIntent = null;
 
 function normalizeSpeech(text) {
   return text
@@ -473,6 +475,198 @@ function isGoogleSearchTabUrl(url) {
   } catch (_error) {
     return false;
   }
+}
+
+function isLearnTabUrl(url) {
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    if (host.includes("learn.ed.ac.uk")) {
+      return true;
+    }
+    if (host.includes("blackboard") && parsed.pathname.includes("/ultra/")) {
+      return true;
+    }
+    return false;
+  } catch (_error) {
+    return false;
+  }
+}
+
+function parseLearnVoiceIntent(text) {
+  const courseworkNumberWords = {
+    zero: "0",
+    one: "1",
+    two: "2",
+    three: "3",
+    four: "4",
+    five: "5",
+    six: "6",
+    seven: "7",
+    eight: "8",
+    nine: "9",
+    ten: "10"
+  };
+  const normalized = normalizeSpeech(text)
+    .replace(/[.,!?;:]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!normalized) return null;
+
+  // STT sometimes merges "open learn" into a single token.
+  if (/\bopenlearn\b/.test(normalized)) {
+    return { action: "open-learn" };
+  }
+
+  if (normalized === "open learn") {
+    return { action: "open-learn" };
+  }
+
+  if (!/\bopen\b/.test(normalized)) {
+    return null;
+  }
+
+  if (/\bopen\s+assessments?\b/.test(normalized)) {
+    return { action: "open-assessments", query: "assessment" };
+  }
+
+  const courseworkMatch = normalized.match(/\bopen\s+(?:the\s+)?((?:course\s*work|coursework|cw)\s*[a-z0-9]+(?:\s+[a-z0-9]+)*)\b/i);
+  if (courseworkMatch && courseworkMatch[1]) {
+    const query = String(courseworkMatch[1])
+      .replace(/\b(?:please|now|the)\b/g, " ")
+      .replace(/\b(zero|one|two|three|four|five|six|seven|eight|nine|ten)\b/gi, (match) => courseworkNumberWords[match.toLowerCase()] || match)
+      .replace(/\s+/g, " ")
+      .trim();
+    if (query) {
+      return { action: "open-coursework", query };
+    }
+  }
+
+  const genericOpenMatch = normalized.match(/\bopen\s+(.+)$/i);
+  if (!genericOpenMatch || !genericOpenMatch[1]) {
+    return null;
+  }
+
+  const query = String(genericOpenMatch[1])
+    .replace(/\b(?:the|course|subject|module|name|called|please|now)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!query) {
+    return null;
+  }
+  if (query === "learn") {
+    return { action: "open-learn" };
+  }
+  return { action: "open-course", query };
+}
+
+function dispatchLearnIntentToTab(tabId, intent, retryCount = 14) {
+  if (!tabId || !intent || !intent.action || intent.action === "open-learn") {
+    return;
+  }
+
+  console.info("[aqual-learn-voice]", JSON.stringify({
+    event: "dispatch",
+    tabId,
+    action: intent.action,
+    query: intent.query || ""
+  }));
+
+  chrome.tabs.sendMessage(
+    tabId,
+    { type: "aqual-learn-action", payload: intent },
+    { frameId: 0 },
+    (response) => {
+      if (chrome.runtime.lastError || !response || !response.ok) {
+        console.warn("[aqual-learn-voice]", JSON.stringify({
+          event: "dispatch_failed",
+          tabId,
+          action: intent.action,
+          query: intent.query || "",
+          error: chrome.runtime.lastError ? chrome.runtime.lastError.message : "",
+          response: response || null
+        }));
+        if (retryCount > 0) {
+          setTimeout(() => {
+            dispatchLearnIntentToTab(tabId, intent, retryCount - 1);
+          }, 550);
+        }
+        return;
+      }
+      if (!response.url) {
+        console.info("[aqual-learn-voice]", JSON.stringify({
+          event: "dispatch_no_url",
+          tabId,
+          action: intent.action,
+          query: intent.query || "",
+          response
+        }));
+        return;
+      }
+
+      const targetUrl = parseAbsoluteHttpUrl(response.url);
+      if (!targetUrl) {
+        console.warn("[aqual-learn-voice]", JSON.stringify({
+          event: "invalid_target_url",
+          tabId,
+          action: intent.action,
+          query: intent.query || "",
+          responseUrl: response.url
+        }));
+        return;
+      }
+
+      const now = Date.now();
+      if (lastVoiceCommand.key === targetUrl && now - lastVoiceCommand.timestamp < 4000) {
+        return;
+      }
+      lastVoiceCommand = { key: targetUrl, timestamp: now };
+      console.info("[aqual-learn-voice]", JSON.stringify({
+        event: "navigate",
+        tabId,
+        action: intent.action,
+        query: intent.query || "",
+        url: targetUrl
+      }));
+      chrome.tabs.update(tabId, { url: targetUrl });
+    }
+  );
+}
+
+function maybeHandleLearnVoiceCommand(text) {
+  const intent = parseLearnVoiceIntent(text);
+  if (!intent) return false;
+
+  if (intent.action === "open-learn") {
+    const now = Date.now();
+    if (lastVoiceCommand.key === LEARN_HOME_URL && now - lastVoiceCommand.timestamp < 4000) {
+      return true;
+    }
+    lastVoiceCommand = { key: LEARN_HOME_URL, timestamp: now };
+    chrome.tabs.create({ url: LEARN_HOME_URL });
+    return true;
+  }
+
+  chrome.tabs.query({ currentWindow: true }, (tabs) => {
+    const list = Array.isArray(tabs) ? tabs : [];
+    const activeLearnTab = list.find((tab) => tab && tab.active && tab.id && isLearnTabUrl(tab.url || ""));
+    const anyLearnTab = list.find((tab) => tab && tab.id && isLearnTabUrl(tab.url || ""));
+    const targetTab = activeLearnTab || anyLearnTab || null;
+
+    if (targetTab && targetTab.id) {
+      if (!targetTab.active) {
+        chrome.tabs.update(targetTab.id, { active: true });
+      }
+      dispatchLearnIntentToTab(targetTab.id, intent);
+      return;
+    }
+
+    pendingLearnIntent = { ...intent, queuedAt: Date.now() };
+    chrome.tabs.create({ url: LEARN_HOME_URL, active: true });
+  });
+
+  return true;
 }
 
 function extractGoogleQueryFromUrl(url) {
@@ -3373,6 +3567,9 @@ function sendAudioControlMessage(payload, retryCount = 2) {
 
 function maybeHandleVoiceCommand(text) {
   if (!text) return;
+  if (maybeHandleLearnVoiceCommand(text)) {
+    return;
+  }
   maybeHandleSkyscannerVoiceCommand(text);
   if (maybeHandleGoogleSearchVoiceCommand(text)) {
     return;
@@ -3579,9 +3776,16 @@ chrome.tabs.onActivated.addListener((activeInfo) => {
   applySettingsToTab(activeInfo.tabId);
 });
 
-chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status === "complete") {
     applySettingsToTab(tabId);
+    if (pendingLearnIntent && isLearnTabUrl((tab && tab.url) || "")) {
+      const queued = pendingLearnIntent;
+      pendingLearnIntent = null;
+      setTimeout(() => {
+        dispatchLearnIntentToTab(tabId, queued);
+      }, 1100);
+    }
   }
 });
 
