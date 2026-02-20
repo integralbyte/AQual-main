@@ -59,6 +59,9 @@ LIVE_SESSION_MAX_ENTRIES = 200
 live_session_store = {}
 live_session_lock = Lock()
 live_screenshot_store = {}
+ring_event_lock = Lock()
+ring_event_counter = 0
+ring_event_last_ts = 0.0
 
 
 def _set_cors_headers(response):
@@ -85,6 +88,28 @@ def _log_gemini_event(event: str, **fields):
 def _log_tts_event(event: str, **fields):
     payload = {"event": event, **fields}
     app.logger.info("[tts] %s", json.dumps(payload, ensure_ascii=True, separators=(",", ":")))
+
+
+def _log_ring_event(event: str, **fields):
+    payload = {"event": event, **fields}
+    app.logger.info("[ring] %s", json.dumps(payload, ensure_ascii=True, separators=(",", ":")))
+
+
+def _register_ring_event(source: str = "unknown", payload=None):
+    global ring_event_counter, ring_event_last_ts
+    now_ts = time.time()
+    with ring_event_lock:
+        ring_event_counter += 1
+        ring_event_last_ts = now_ts
+        cursor = ring_event_counter
+    _log_ring_event(
+        "event_push",
+        source=source,
+        cursor=cursor,
+        timestamp=now_ts,
+        payload=payload or {},
+    )
+    return cursor, now_ts
 
 
 def _extract_host(url: str) -> str:
@@ -1670,6 +1695,47 @@ def gemini_live_query():
             error_message=str(e)[:240],
         )
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/ring-event/push', methods=['POST', 'OPTIONS'])
+def ring_event_push():
+    """Receive ring button events from a native/local monitor process."""
+    if request.method == 'OPTIONS':
+        return _set_cors_headers(jsonify({'ok': True}))
+
+    data = request.get_json(silent=True) or {}
+    source = str(data.get("source") or "ring-monitor")
+    cursor, ts = _register_ring_event(source=source, payload=data)
+    return jsonify({
+        "ok": True,
+        "cursor": int(cursor),
+        "lastEventTs": float(ts),
+    })
+
+
+@app.route('/ring-event/poll', methods=['GET', 'OPTIONS'])
+def ring_event_poll():
+    """Poll ring events using a monotonically increasing cursor."""
+    if request.method == 'OPTIONS':
+        return _set_cors_headers(jsonify({'ok': True}))
+
+    raw_cursor = request.args.get("cursor", "0")
+    try:
+        client_cursor = max(0, int(raw_cursor))
+    except Exception:
+        client_cursor = 0
+
+    with ring_event_lock:
+        server_cursor = int(ring_event_counter)
+        last_ts = float(ring_event_last_ts)
+
+    delta = max(0, server_cursor - client_cursor)
+    return jsonify({
+        "ok": True,
+        "cursor": server_cursor,
+        "delta": delta,
+        "lastEventTs": last_ts,
+    })
 
 
 @app.route('/speak-text', methods=['POST', 'OPTIONS'])
