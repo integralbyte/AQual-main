@@ -6,7 +6,7 @@
   "background": {
     "service_worker": "background/service-worker.js"
   },
-  "permissions": ["storage", "activeTab", "offscreen"],
+  "permissions": ["storage", "activeTab", "offscreen", "hid"],
   "host_permissions": [
     "<all_urls>",
     "http://localhost:8000/*",

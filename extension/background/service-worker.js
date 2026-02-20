@@ -125,6 +125,368 @@ let geminiLiveCachedScreenshotPageUrl = "";
 
 const GEMINI_LIVE_SCREENSHOT_REFRESH_MS = 12000;
 const GEMINI_LIVE_MAX_QUEUE_SIZE = 2;
+const RING_HID_USAGE_PAGE = 0x000d;
+const RING_HID_DEBOUNCE_MS = 320;
+const RING_HID_DEFAULT_STATUS = "Not connected. Press Connect and choose your ring.";
+const BACKEND_RING_TOGGLE_DEBOUNCE_MS = 240;
+
+let ringHidHandlersByKey = new Map();
+let ringHidPressedByKey = new Map();
+let ringHidEventsAttached = false;
+let ringHidLastToggleAt = 0;
+let backendRingLastToggleAt = 0;
+
+function localGet(defaults) {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(defaults, (stored) => {
+      resolve(stored || {});
+    });
+  });
+}
+
+function localSet(values) {
+  return new Promise((resolve) => {
+    chrome.storage.local.set(values, () => resolve());
+  });
+}
+
+function toHexId(value) {
+  return Number(value || 0).toString(16).padStart(4, "0").toUpperCase();
+}
+
+function formatRingHidDeviceLabel(device) {
+  if (!device) return "ring device";
+  const name = String(device.productName || "").trim();
+  const ids = `VID ${toHexId(device.vendorId)} PID ${toHexId(device.productId)}`;
+  return name ? `${name} (${ids})` : ids;
+}
+
+function normalizeRingHidDeviceInfo(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const vendorId = Number(raw.vendorId);
+  const productId = Number(raw.productId);
+  if (!Number.isFinite(vendorId) || !Number.isFinite(productId)) {
+    return null;
+  }
+  return {
+    vendorId,
+    productId,
+    productName: String(raw.productName || "Ring HID device")
+  };
+}
+
+function toRingHidDeviceInfo(device) {
+  if (!device) return null;
+  return normalizeRingHidDeviceInfo({
+    vendorId: Number(device.vendorId || 0),
+    productId: Number(device.productId || 0),
+    productName: String(device.productName || "Ring HID device")
+  });
+}
+
+function isLikelyRingHidDevice(device) {
+  if (!device) return false;
+  if (!device.collections || !device.collections.length) {
+    return false;
+  }
+
+  return device.collections.some((collection) => {
+    return Number(collection.usagePage) === RING_HID_USAGE_PAGE;
+  });
+}
+
+async function getGrantedRingHidDevices() {
+  if (!navigator.hid || !navigator.hid.getDevices) return [];
+  const allDevices = await navigator.hid.getDevices();
+  return allDevices.filter((device) => isLikelyRingHidDevice(device));
+}
+
+function ringHidDeviceKey(device) {
+  if (!device || typeof device !== "object") return "";
+  return `${Number(device.vendorId || 0)}:${Number(device.productId || 0)}`;
+}
+
+function isSameRingHidDevice(device, selected) {
+  if (!device || !selected) return false;
+  return Number(device.vendorId || 0) === Number(selected.vendorId || 0)
+    && Number(device.productId || 0) === Number(selected.productId || 0);
+}
+
+function hasRingPressSignal(dataView) {
+  if (!dataView || typeof dataView.byteLength !== "number") return false;
+  for (let i = 0; i < dataView.byteLength; i += 1) {
+    if (dataView.getUint8(i) !== 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function toggleHighContrastFromRing(device) {
+  getSettings((settings) => {
+    const nextEnabled = !Boolean(settings.highContrastEnabled);
+    const updates = { highContrastEnabled: nextEnabled };
+    chrome.storage.sync.set(updates, () => {
+      const nextSettings = { ...settings, ...updates };
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (!tabs || !tabs.length) return;
+        sendToTab(tabs[0].id, nextSettings);
+      });
+
+      const label = formatRingHidDeviceLabel(device);
+      localSet({
+        aqualRingHidStatus: `${label} connected. Button press toggled high contrast ${nextEnabled ? "ON" : "OFF"}.`,
+        aqualRingHidLastToggleAt: Date.now()
+      });
+    });
+  });
+}
+
+function toggleHighContrastFromBackendRing(source = "backend-ring-monitor") {
+  getSettings((settings) => {
+    const nextEnabled = !Boolean(settings.highContrastEnabled);
+    const updates = { highContrastEnabled: nextEnabled };
+    chrome.storage.sync.set(updates, () => {
+      const nextSettings = { ...settings, ...updates };
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (!tabs || !tabs.length) return;
+        sendToTab(tabs[0].id, nextSettings);
+      });
+      localSet({
+        aqualRingHidStatus: `Backend ring event (${source}) toggled high contrast ${nextEnabled ? "ON" : "OFF"}.`,
+        aqualRingHidLastToggleAt: Date.now()
+      });
+    });
+  });
+}
+
+function handleRingHidInputReport(event) {
+  const device = event ? event.device : null;
+  const key = ringHidDeviceKey(device);
+  if (!key) return;
+
+  const pressed = hasRingPressSignal(event ? event.data : null);
+  const wasPressed = Boolean(ringHidPressedByKey.get(key));
+  ringHidPressedByKey.set(key, pressed);
+
+  if (!pressed || wasPressed) {
+    return;
+  }
+
+  const now = Date.now();
+  if (now - ringHidLastToggleAt < RING_HID_DEBOUNCE_MS) {
+    return;
+  }
+  ringHidLastToggleAt = now;
+  toggleHighContrastFromRing(device);
+}
+
+async function detachRingHidDevice(device) {
+  const key = ringHidDeviceKey(device);
+  if (!key) return;
+
+  const handler = ringHidHandlersByKey.get(key);
+  if (handler) {
+    try {
+      device.removeEventListener("inputreport", handler);
+    } catch (_error) {
+      // Ignore event detachment errors.
+    }
+    ringHidHandlersByKey.delete(key);
+  }
+  ringHidPressedByKey.delete(key);
+
+  if (device.opened) {
+    try {
+      await device.close();
+    } catch (_error) {
+      // Ignore close errors.
+    }
+  }
+}
+
+async function attachRingHidDevice(device) {
+  if (!device) return;
+  const key = ringHidDeviceKey(device);
+  if (!key) return;
+
+  if (device.collections && device.collections.length > 0) {
+    const hasExpectedUsagePage = device.collections.some((collection) => {
+      return Number(collection.usagePage) === RING_HID_USAGE_PAGE;
+    });
+    if (!hasExpectedUsagePage) {
+      throw new Error("Selected device does not expose usage page 0x000D.");
+    }
+  }
+
+  if (!device.opened) {
+    await device.open();
+  }
+
+  if (!ringHidHandlersByKey.has(key)) {
+    const handler = (event) => {
+      handleRingHidInputReport(event);
+    };
+    device.addEventListener("inputreport", handler);
+    ringHidHandlersByKey.set(key, handler);
+  }
+}
+
+async function detachAllRingHidExcept(selectedKey) {
+  if (!navigator.hid || !navigator.hid.getDevices) return;
+  const devices = await navigator.hid.getDevices();
+  for (let i = 0; i < devices.length; i += 1) {
+    const device = devices[i];
+    const key = ringHidDeviceKey(device);
+    if (!key) continue;
+    if (key === selectedKey) continue;
+    if (ringHidHandlersByKey.has(key)) {
+      await detachRingHidDevice(device);
+    }
+  }
+}
+
+async function connectRingHidDevice(selection) {
+  const selected = normalizeRingHidDeviceInfo(selection);
+  if (!selected) {
+    return { ok: false, error: "Invalid ring HID device info." };
+  }
+
+  if (!navigator.hid || !navigator.hid.getDevices) {
+    await localSet({
+      aqualRingHidEnabled: false,
+      aqualRingHidStatus: "WebHID is unavailable in this extension context."
+    });
+    return { ok: false, error: "WebHID unavailable." };
+  }
+
+  const grantedDevices = await getGrantedRingHidDevices();
+  const device = grantedDevices.find((candidate) => isSameRingHidDevice(candidate, selected));
+  if (!device) {
+    await localSet({
+      aqualRingHidEnabled: true,
+      aqualRingHidDevice: selected,
+      aqualRingHidStatus: "Ring access missing. Press Connect ring again in the popup."
+    });
+    return { ok: false, error: "Ring permission not available. Reconnect from popup." };
+  }
+
+  await detachAllRingHidExcept(ringHidDeviceKey(selected));
+  await attachRingHidDevice(device);
+  await localSet({
+    aqualRingHidEnabled: true,
+    aqualRingHidDevice: {
+      vendorId: Number(device.vendorId || selected.vendorId),
+      productId: Number(device.productId || selected.productId),
+      productName: String(device.productName || selected.productName || "Ring HID device")
+    },
+    aqualRingHidStatus: `${formatRingHidDeviceLabel(device)} connected. Press the ring button to toggle high contrast.`
+  });
+
+  return { ok: true };
+}
+
+async function disconnectRingHid(clearStored = true) {
+  if (navigator.hid && navigator.hid.getDevices) {
+    const devices = await navigator.hid.getDevices();
+    for (let i = 0; i < devices.length; i += 1) {
+      const key = ringHidDeviceKey(devices[i]);
+      if (key && ringHidHandlersByKey.has(key)) {
+        await detachRingHidDevice(devices[i]);
+      }
+    }
+  }
+
+  ringHidLastToggleAt = 0;
+  if (clearStored) {
+    await localSet({
+      aqualRingHidEnabled: false,
+      aqualRingHidDevice: null,
+      aqualRingHidStatus: RING_HID_DEFAULT_STATUS
+    });
+  } else {
+    await localSet({
+      aqualRingHidEnabled: true,
+      aqualRingHidStatus: "Ring disconnected. Reconnect in popup."
+    });
+  }
+}
+
+function ensureRingHidEvents() {
+  if (ringHidEventsAttached) return;
+  if (!navigator.hid || !navigator.hid.addEventListener) return;
+  ringHidEventsAttached = true;
+
+  navigator.hid.addEventListener("disconnect", (event) => {
+    const disconnected = event ? event.device : null;
+    const key = ringHidDeviceKey(disconnected);
+    if (key && ringHidHandlersByKey.has(key)) {
+      ringHidHandlersByKey.delete(key);
+      ringHidPressedByKey.delete(key);
+      localSet({
+        aqualRingHidEnabled: true,
+        aqualRingHidStatus: "Ring disconnected. Reconnect in popup."
+      });
+    }
+  });
+
+  navigator.hid.addEventListener("connect", async (event) => {
+    const connected = event ? event.device : null;
+    const stored = await localGet({
+      aqualRingHidEnabled: false,
+      aqualRingHidDevice: null
+    });
+    if (!stored.aqualRingHidEnabled || !stored.aqualRingHidDevice) return;
+    const selected = normalizeRingHidDeviceInfo(stored.aqualRingHidDevice);
+    if (!selected) return;
+    if (!isSameRingHidDevice(connected, selected)) return;
+    connectRingHidDevice(selected).catch(() => {
+      // Ignore auto-reconnect errors.
+    });
+  });
+}
+
+async function initializeRingHid() {
+  ensureRingHidEvents();
+  const stored = await localGet({
+    aqualRingHidEnabled: false,
+    aqualRingHidDevice: null,
+    aqualRingHidStatus: RING_HID_DEFAULT_STATUS
+  });
+  const selected = normalizeRingHidDeviceInfo(stored.aqualRingHidDevice);
+  if (stored.aqualRingHidEnabled && selected) {
+    await connectRingHidDevice(selected);
+    return;
+  }
+
+  if (stored.aqualRingHidEnabled && !selected) {
+    await localSet({
+      aqualRingHidEnabled: false,
+      aqualRingHidDevice: null,
+      aqualRingHidStatus: "Saved ring device info is invalid. Connect ring again."
+    });
+    return;
+  }
+
+  // Auto-adopt a previously granted ring device so users don't need popup interaction each run.
+  const candidates = await getGrantedRingHidDevices();
+  if (candidates.length > 0) {
+    const autoDeviceInfo = toRingHidDeviceInfo(candidates[0]);
+    if (autoDeviceInfo) {
+      await localSet({
+        aqualRingHidEnabled: true,
+        aqualRingHidDevice: autoDeviceInfo,
+        aqualRingHidStatus: `Auto-connecting ${formatRingHidDeviceLabel(autoDeviceInfo)}...`
+      });
+      await connectRingHidDevice(autoDeviceInfo);
+      return;
+    }
+  }
+
+  if (!stored.aqualRingHidStatus) {
+    await localSet({ aqualRingHidStatus: RING_HID_DEFAULT_STATUS });
+  }
+}
 
 function normalizeSpeech(text) {
   return text
@@ -4328,10 +4690,31 @@ function captureScreenshot() {
   });
 }
 
+initializeRingHid().catch((error) => {
+  console.warn("[aqual-ring-hid]", JSON.stringify({
+    event: "init_error",
+    error: error && error.message ? error.message : String(error)
+  }));
+});
+
 chrome.runtime.onInstalled.addListener((details) => {
   if (details.reason === "install") {
     chrome.storage.sync.set({ ...DEFAULTS });
+    chrome.storage.local.set({
+      aqualRingHidEnabled: false,
+      aqualRingHidDevice: null,
+      aqualRingHidStatus: RING_HID_DEFAULT_STATUS
+    });
   }
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  initializeRingHid().catch((error) => {
+    console.warn("[aqual-ring-hid]", JSON.stringify({
+      event: "startup_init_error",
+      error: error && error.message ? error.message : String(error)
+    }));
+  });
 });
 
 chrome.tabs.onActivated.addListener((activeInfo) => {
@@ -4392,6 +4775,33 @@ chrome.commands.onCommand.addListener((command) => {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message) return;
+  if (message.type === "aqual-ring-hid-connect") {
+    connectRingHidDevice(message.device)
+      .then((result) => sendResponse(result))
+      .catch((error) => {
+        sendResponse({ ok: false, error: error && error.message ? error.message : String(error) });
+      });
+    return true;
+  }
+  if (message.type === "aqual-ring-hid-disconnect") {
+    disconnectRingHid(true)
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => {
+        sendResponse({ ok: false, error: error && error.message ? error.message : String(error) });
+      });
+    return true;
+  }
+  if (message.type === "aqual-ring-backend-toggle") {
+    const now = Date.now();
+    if (now - backendRingLastToggleAt < BACKEND_RING_TOGGLE_DEBOUNCE_MS) {
+      sendResponse({ ok: true, ignored: true });
+      return false;
+    }
+    backendRingLastToggleAt = now;
+    toggleHighContrastFromBackendRing(String(message.source || "backend-ring-monitor"));
+    sendResponse({ ok: true });
+    return false;
+  }
   if (message.type === "aqual-audio-mode") {
     const mode = normalizeAudioMode(message.mode);
     liveAudioMode = mode;
