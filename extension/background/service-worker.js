@@ -119,12 +119,15 @@ let geminiLiveCallWindowId = chrome.windows.WINDOW_ID_CURRENT;
 let geminiLiveConversationId = "";
 let geminiLiveQueue = [];
 let geminiLiveQueueProcessing = false;
+let geminiLiveInFlightController = null;
+let geminiLiveInFlightSequence = 0;
 let geminiLiveCachedScreenshotDataUrl = "";
 let geminiLiveCachedScreenshotCapturedAt = 0;
 let geminiLiveCachedScreenshotPageUrl = "";
 
 const GEMINI_LIVE_SCREENSHOT_REFRESH_MS = 12000;
 const GEMINI_LIVE_MAX_QUEUE_SIZE = 2;
+const GEMINI_LIVE_REQUEST_TIMEOUT_MS = 20000;
 const RING_HID_USAGE_PAGE = 0x000d;
 const RING_HID_DEBOUNCE_MS = 320;
 const RING_HID_DEFAULT_STATUS = "Not connected. Press Connect and choose your ring.";
@@ -3948,6 +3951,17 @@ function clearGeminiLiveTimeout() {
   geminiLiveTimeoutTimer = null;
 }
 
+function abortGeminiLiveInFlightRequest(reason = "superseded") {
+  if (!geminiLiveInFlightController) return;
+  try {
+    geminiLiveInFlightController.abort(reason);
+  } catch (_error) {
+    // Ignore abort races.
+  }
+  geminiLiveInFlightController = null;
+  geminiLiveInFlightSequence = 0;
+}
+
 function queryActiveTab() {
   return new Promise((resolve) => {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
@@ -3989,11 +4003,49 @@ function captureVisibleTabDataUrl(windowId) {
   });
 }
 
-async function requestGeminiLiveResponse(payload) {
+async function buildGeminiLiveStartContext(preferredTabId = 0, preferredWindowId = chrome.windows.WINDOW_ID_CURRENT) {
+  const tab = await getTabById(preferredTabId) || await queryActiveTab();
+  const tabId = tab && tab.id ? tab.id : preferredTabId || 0;
+  const windowId = tab && Number.isInteger(tab.windowId) ? tab.windowId : preferredWindowId;
+  const pageUrl = tab && tab.url ? tab.url : "";
+  return {
+    tabId,
+    windowId,
+    pageUrl,
+    screenshotDataUrl: "",
+    includePageContext: false,
+    conversationId: `tab-${tabId || 0}`
+  };
+}
+
+async function pushGeminiLiveVisualContext(sessionId, context) {
+  if (!sessionId || !context) return;
+  if (!geminiLiveCallActive || geminiLiveCallSessionId !== sessionId) return;
+  const targetWindowId = Number.isInteger(context.windowId) ? context.windowId : geminiLiveCallWindowId;
+  let screenshotDataUrl = "";
+  try {
+    screenshotDataUrl = await captureVisibleTabDataUrl(targetWindowId);
+  } catch (_error) {
+    screenshotDataUrl = "";
+  }
+  if (!screenshotDataUrl) return;
+  if (!geminiLiveCallActive || geminiLiveCallSessionId !== sessionId) return;
+  sendAudioControlMessage({
+    type: "aqual-gemini-live-stream-context",
+    sessionId,
+    includePageContext: true,
+    pageUrl: "",
+    conversationId: String(context.conversationId || ""),
+    screenshotDataUrl
+  });
+}
+
+async function requestGeminiLiveResponse(payload, signal) {
   const response = await fetch(GEMINI_LIVE_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
+    body: JSON.stringify(payload),
+    signal
   });
 
   let data = {};
@@ -4019,13 +4071,14 @@ function enqueueGeminiLiveChunk(message) {
   if (!geminiLiveCallActive || !sessionId || sessionId !== geminiLiveCallSessionId) {
     return;
   }
+  const sequence = Number(message.sequence || 0);
   const audioBase64 = String(message.audioBase64 || "");
   if (!audioBase64) {
     return;
   }
   geminiLiveQueue.push({
     sessionId,
-    sequence: Number(message.sequence || 0),
+    sequence,
     audioBase64,
     audioMimeType: String(message.audioMimeType || "audio/pcm;rate=24000"),
     durationMs: Number(message.durationMs || 0),
@@ -4033,6 +4086,16 @@ function enqueueGeminiLiveChunk(message) {
   });
   if (geminiLiveQueue.length > GEMINI_LIVE_MAX_QUEUE_SIZE) {
     geminiLiveQueue = geminiLiveQueue.slice(-GEMINI_LIVE_MAX_QUEUE_SIZE);
+  }
+  if (
+    geminiLiveQueueProcessing
+    && geminiLiveInFlightController
+    && sequence
+    && geminiLiveInFlightSequence
+    && sequence > geminiLiveInFlightSequence
+  ) {
+    abortGeminiLiveInFlightRequest("superseded_by_newer_audio_chunk");
+    geminiLiveQueue = geminiLiveQueue.slice(-1);
   }
   processGeminiLiveQueue().catch((error) => {
     console.warn("[aqual-gemini-live]", JSON.stringify({
@@ -4089,7 +4152,40 @@ async function processGeminiLiveChunk(chunk) {
   }
 
   const startedAt = Date.now();
-  const data = await requestGeminiLiveResponse(payload);
+  const controller = new AbortController();
+  geminiLiveInFlightController = controller;
+  geminiLiveInFlightSequence = Number(chunk.sequence || 0);
+  const timeoutTimer = setTimeout(() => {
+    if (geminiLiveInFlightController === controller) {
+      try {
+        controller.abort("request_timeout");
+      } catch (_error) {
+        // Ignore abort races.
+      }
+    }
+  }, GEMINI_LIVE_REQUEST_TIMEOUT_MS);
+
+  let data;
+  try {
+    data = await requestGeminiLiveResponse(payload, controller.signal);
+  } catch (error) {
+    if (controller.signal.aborted || (error && error.name === "AbortError")) {
+      console.info("[aqual-gemini-live]", JSON.stringify({
+        event: "chunk_response_aborted",
+        sessionId: chunk.sessionId,
+        sequence: chunk.sequence,
+        reason: String(controller.signal.reason || "aborted"),
+      }));
+      return;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutTimer);
+    if (geminiLiveInFlightController === controller) {
+      geminiLiveInFlightController = null;
+      geminiLiveInFlightSequence = 0;
+    }
+  }
   const durationMs = Date.now() - startedAt;
 
   console.info("[aqual-gemini-live]", JSON.stringify({
@@ -4144,6 +4240,9 @@ async function processGeminiLiveQueue() {
       try {
         await processGeminiLiveChunk(chunk);
       } catch (error) {
+        if (error && error.name === "AbortError") {
+          continue;
+        }
         console.warn("[aqual-gemini-live]", JSON.stringify({
           event: "chunk_response_error",
           sequence: Number(chunk && chunk.sequence ? chunk.sequence : 0),
@@ -4182,6 +4281,7 @@ function startGeminiLiveCall(sender = null) {
   geminiLiveConversationId = `tab-${geminiLiveCallTabId || 0}`;
   geminiLiveQueue = [];
   geminiLiveQueueProcessing = false;
+  abortGeminiLiveInFlightRequest("call_start_reset");
   resetGeminiLiveScreenshotCache();
   clearGeminiLiveTimeout();
   if (geminiLiveCallTabId) {
@@ -4197,15 +4297,37 @@ function startGeminiLiveCall(sender = null) {
   sendGeminiLiveMessageToTab(geminiLiveCallTabId, {
     type: "aqual-gemini-live-status",
     status: "Gemini Live",
-    detail: "Live call ON. Speak naturally. Press Alt+D again to stop.",
+    detail: "Live call ON. Connecting...",
     sticky: true
   });
 
-  ensureOffscreenDocument().then(() => {
+  ensureOffscreenDocument().then(async () => {
+    const context = await buildGeminiLiveStartContext(geminiLiveCallTabId, geminiLiveCallWindowId);
+    if (context.tabId) {
+      geminiLiveCallTabId = context.tabId;
+      geminiLiveLastTabId = context.tabId;
+      geminiLiveConversationId = context.conversationId;
+    }
+    if (Number.isInteger(context.windowId)) {
+      geminiLiveCallWindowId = context.windowId;
+    }
+
     sendAudioControlMessage({
       type: "aqual-gemini-live-stream-start",
-      sessionId: geminiLiveCallSessionId
+      sessionId: geminiLiveCallSessionId,
+      pageUrl: context.pageUrl,
+      conversationId: context.conversationId,
+      screenshotDataUrl: context.screenshotDataUrl,
+      includePageContext: Boolean(context.includePageContext)
     });
+
+    // Capture and send screenshot context after live audio starts so listening is instant.
+    pushGeminiLiveVisualContext(geminiLiveCallSessionId, context).catch((_error) => {
+      // Visual context is best effort.
+    });
+  }).catch((error) => {
+    const reason = error && error.message ? error.message : "offscreen init failed";
+    stopGeminiLiveCall(`Live call stopped: ${reason}`, true);
   });
 }
 
@@ -4218,6 +4340,7 @@ function stopGeminiLiveCall(reason = "Live call stopped.", notify = true) {
   geminiLiveConversationId = "";
   geminiLiveQueue = [];
   geminiLiveQueueProcessing = false;
+  abortGeminiLiveInFlightRequest("call_stopped");
   resetGeminiLiveScreenshotCache();
   clearGeminiLiveTimeout();
 
@@ -4846,7 +4969,43 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     });
   }
   if (message.type === "aqual-gemini-live-stream-chunk") {
-    enqueueGeminiLiveChunk(message);
+    // Legacy event type from old pseudo-live path. Ignored after websocket revamp.
+    return;
+  }
+  if (message.type === "aqual-gemini-live-stream-turn-result") {
+    const sessionId = Number(message.sessionId || 0);
+    if (!geminiLiveCallActive || !sessionId || sessionId !== geminiLiveCallSessionId) {
+      return;
+    }
+    const targetTabId = geminiLiveCallTabId || geminiLiveLastTabId;
+    if (targetTabId) {
+      sendGeminiLiveMessageToTab(targetTabId, {
+        type: "aqual-gemini-live-result",
+        ok: true,
+        answer: String(message.answer || ""),
+        transcript: String(message.transcript || ""),
+        model: String(message.model || "")
+      });
+    }
+    return;
+  }
+  if (message.type === "aqual-gemini-live-stream-input-transcript") {
+    const sessionId = Number(message.sessionId || 0);
+    if (!geminiLiveCallActive || !sessionId || sessionId !== geminiLiveCallSessionId) {
+      return;
+    }
+    if (geminiLiveLastTabId) {
+      const transcriptText = String(message.text || "").trim();
+      if (transcriptText) {
+        sendGeminiLiveMessageToTab(geminiLiveLastTabId, {
+          type: "aqual-gemini-live-status",
+          status: "Gemini Live",
+          detail: `You: ${transcriptText}`,
+          sticky: true
+        });
+      }
+    }
+    return;
   }
   if (message.type === "aqual-gemini-live-stream-state") {
     const state = String(message.state || "");
@@ -4860,11 +5019,43 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (state === "error") {
       stopGeminiLiveCall(`Live call stopped: ${errorText || "stream error"}`, true);
     }
-    if (state === "listening" && geminiLiveLastTabId) {
+    if (state === "connecting" && geminiLiveLastTabId) {
+      sendGeminiLiveMessageToTab(geminiLiveLastTabId, {
+        type: "aqual-gemini-live-status",
+        status: "Gemini Live",
+        detail: "Connecting to Gemini Live...",
+        sticky: true
+      });
+    }
+    if (state === "reconnecting" && geminiLiveLastTabId) {
+      sendGeminiLiveMessageToTab(geminiLiveLastTabId, {
+        type: "aqual-gemini-live-status",
+        status: "Gemini Live",
+        detail: "Reconnecting to Gemini Live...",
+        sticky: true
+      });
+    }
+    if ((state === "ready" || state === "listening") && geminiLiveLastTabId) {
       sendGeminiLiveMessageToTab(geminiLiveLastTabId, {
         type: "aqual-gemini-live-status",
         status: "Gemini Live",
         detail: "Live call ON. Listening...",
+        sticky: true
+      });
+    }
+    if (state === "responding" && geminiLiveLastTabId) {
+      sendGeminiLiveMessageToTab(geminiLiveLastTabId, {
+        type: "aqual-gemini-live-status",
+        status: "Gemini Live",
+        detail: "Gemini is responding...",
+        sticky: true
+      });
+    }
+    if (state === "stopped" && geminiLiveLastTabId) {
+      sendGeminiLiveMessageToTab(geminiLiveLastTabId, {
+        type: "aqual-gemini-live-status",
+        status: "Gemini Live",
+        detail: "Live call OFF.",
         sticky: true
       });
     }

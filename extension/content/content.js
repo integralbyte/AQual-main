@@ -228,8 +228,9 @@ const GOOGLE_MAPS_BLOCKLIST = [
 
 const DOC_SERVER_BASE = "http://localhost:8080";
 const RING_EVENT_POLL_ENDPOINT = `${DOC_SERVER_BASE}/ring-event/poll`;
-const RING_EVENT_POLL_INTERVAL_MS = 320;
+const RING_EVENT_POLL_INTERVAL_MS = 1400;
 const RING_EVENT_LOCAL_DEBOUNCE_MS = 260;
+const RING_EVENT_POLL_DEFAULTS = { aqualRingHidEnabled: false };
 
 function isGoogleMapsUrl() {
   const href = window.location.href;
@@ -2458,7 +2459,25 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 chrome.storage.sync.get(DEFAULTS, (stored) => {
   applySettings(stored || {});
-  startRingBackendPolling();
+  chrome.storage.local.get(RING_EVENT_POLL_DEFAULTS, (localStored) => {
+    if (localStored && localStored.aqualRingHidEnabled) {
+      startRingBackendPolling();
+    } else {
+      stopRingBackendPolling();
+    }
+  });
+});
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== "local" || !changes || !changes.aqualRingHidEnabled) {
+    return;
+  }
+  const nextValue = Boolean(changes.aqualRingHidEnabled.newValue);
+  if (nextValue) {
+    startRingBackendPolling();
+  } else {
+    stopRingBackendPolling();
+  }
 });
 
 function clampNumber(value, min, max) {
@@ -3492,6 +3511,13 @@ function startRingBackendPolling() {
       });
     }
   });
+}
+
+function stopRingBackendPolling() {
+  if (!ringEventPollTimer) return;
+  clearInterval(ringEventPollTimer);
+  ringEventPollTimer = null;
+  ringEventPollInFlight = false;
 }
 
 function startAudioHoldPing() {
