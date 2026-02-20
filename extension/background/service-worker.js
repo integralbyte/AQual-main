@@ -125,6 +125,7 @@ let geminiLiveCachedScreenshotDataUrl = "";
 let geminiLiveCachedScreenshotCapturedAt = 0;
 let geminiLiveCachedScreenshotPageUrl = "";
 let geminiLiveLastToggleAt = 0;
+let geminiLiveLastSpeechStartTurnId = 0;
 
 const GEMINI_LIVE_SCREENSHOT_REFRESH_MS = 12000;
 const GEMINI_LIVE_MAX_QUEUE_SIZE = 2;
@@ -4283,6 +4284,7 @@ function startGeminiLiveCall(sender = null) {
   geminiLiveConversationId = `tab-${geminiLiveCallTabId || 0}`;
   geminiLiveQueue = [];
   geminiLiveQueueProcessing = false;
+  geminiLiveLastSpeechStartTurnId = 0;
   abortGeminiLiveInFlightRequest("call_start_reset");
   resetGeminiLiveScreenshotCache();
   clearGeminiLiveTimeout();
@@ -4342,6 +4344,7 @@ function stopGeminiLiveCall(reason = "Live call stopped.", notify = true) {
   geminiLiveConversationId = "";
   geminiLiveQueue = [];
   geminiLiveQueueProcessing = false;
+  geminiLiveLastSpeechStartTurnId = 0;
   abortGeminiLiveInFlightRequest("call_stopped");
   resetGeminiLiveScreenshotCache();
   clearGeminiLiveTimeout();
@@ -4995,6 +4998,44 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         model: String(message.model || "")
       });
     }
+    return;
+  }
+  if (message.type === "aqual-gemini-live-stream-speech-start") {
+    const sessionId = Number(message.sessionId || 0);
+    if (!geminiLiveCallActive || !sessionId || sessionId !== geminiLiveCallSessionId) {
+      return;
+    }
+    const turnId = Number(message.turnId || 0);
+    if (turnId && turnId === geminiLiveLastSpeechStartTurnId) {
+      return;
+    }
+    if (turnId) {
+      geminiLiveLastSpeechStartTurnId = turnId;
+    }
+
+    Promise.resolve().then(async () => {
+      const context = await buildGeminiLiveStartContext(geminiLiveCallTabId, geminiLiveCallWindowId);
+      if (context.tabId) {
+        geminiLiveCallTabId = context.tabId;
+        geminiLiveLastTabId = context.tabId;
+      }
+      if (Number.isInteger(context.windowId)) {
+        geminiLiveCallWindowId = context.windowId;
+      }
+      if (!geminiLiveConversationId || geminiLiveConversationId === "tab-0") {
+        geminiLiveConversationId = context.conversationId || `tab-${geminiLiveCallTabId || 0}`;
+      }
+
+      await pushGeminiLiveVisualContext(sessionId, {
+        ...context,
+        conversationId: geminiLiveConversationId || context.conversationId || `tab-${geminiLiveCallTabId || 0}`
+      });
+    }).catch((error) => {
+      console.warn("[aqual-gemini-live]", JSON.stringify({
+        event: "speech_start_context_error",
+        error: error && error.message ? error.message : String(error)
+      }));
+    });
     return;
   }
   if (message.type === "aqual-gemini-live-stream-input-transcript") {

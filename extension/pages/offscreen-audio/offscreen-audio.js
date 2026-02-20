@@ -377,7 +377,6 @@ function scheduleGeminiLiveSocketReconnect(sessionId, detail = "") {
     GEMINI_LIVE_SOCKET_RECONNECT_BASE_MS * (2 ** Math.max(0, geminiLiveStreamSocketReconnectAttempts - 1)),
     GEMINI_LIVE_SOCKET_RECONNECT_MAX_MS
   );
-  stopGeminiLiveStreamPlaybackQueue();
   emitGeminiLiveStreamState("reconnecting", detail, sessionId);
   geminiLiveStreamSocketReconnectTimer = setTimeout(() => {
     geminiLiveStreamSocketReconnectTimer = null;
@@ -441,6 +440,16 @@ function openGeminiLiveSocket(sessionId, contextPayload) {
       if (state) {
         emitGeminiLiveStreamState(state);
       }
+      return;
+    }
+
+    if (eventType === "speech_start") {
+      chrome.runtime.sendMessage({
+        type: "aqual-gemini-live-stream-speech-start",
+        sessionId,
+        turnId: Number(payload.turnId || 0),
+        source: String(payload.source || "")
+      });
       return;
     }
 
@@ -574,6 +583,10 @@ async function startGeminiLiveStream(sessionIdRaw, contextPayload = null) {
     processor = context.createScriptProcessor(GEMINI_LIVE_STREAM_PROCESSOR_FRAMES, 1, 1);
     processor.onaudioprocess = (event) => {
       if (!geminiLiveStreamActive || geminiLiveStreamSessionId !== sessionId || !audioContext) return;
+      if (geminiLiveStreamPlaybackSources.size > 0) {
+        // Avoid feedback self-interruption that cuts off assistant speech.
+        return;
+      }
       const ws = audioWs;
       if (!ws || ws.readyState !== WebSocket.OPEN || !geminiLiveStreamSocketReady) {
         return;

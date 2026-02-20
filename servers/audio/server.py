@@ -74,7 +74,7 @@ def _get_env_float(name: str, default: float, minimum=None, maximum=None) -> flo
 
 
 GEMINI_LIVE_THINKING_BUDGET = _get_env_int("GEMINI_LIVE_THINKING_BUDGET", 0, minimum=0, maximum=32768)
-GEMINI_LIVE_MAX_OUTPUT_TOKENS = _get_env_int("GEMINI_LIVE_MAX_OUTPUT_TOKENS", 160, minimum=32, maximum=2048)
+GEMINI_LIVE_MAX_OUTPUT_TOKENS = _get_env_int("GEMINI_LIVE_MAX_OUTPUT_TOKENS", 320, minimum=256, maximum=2048)
 GEMINI_LIVE_TEMPERATURE = _get_env_float("GEMINI_LIVE_TEMPERATURE", 0.1, minimum=0.0, maximum=2.0)
 GEMINI_LIVE_INPUT_SAMPLE_RATE = _get_env_int("GEMINI_LIVE_INPUT_SAMPLE_RATE", 16000, minimum=8000, maximum=48000)
 GEMINI_LIVE_AAD_PREFIX_PADDING_MS = _get_env_int("GEMINI_LIVE_AAD_PREFIX_PADDING_MS", 120, minimum=0, maximum=2000)
@@ -492,6 +492,11 @@ async def websocket_gemini_live(websocket: WebSocket):
                     nonlocal had_user_audio_since_turn, had_local_speech_since_turn, first_voice_activity_seen
                     if not blob_bytes:
                         return True
+                    # Snapshot/page context must be sent before first audio of the turn;
+                    # sending context mid-turn can interrupt or truncate model speech.
+                    if context_pending_for_session and not had_user_audio_since_turn:
+                        if not await send_context_once():
+                            return False
                     try:
                         await session.send_realtime_input(
                             audio=types.Blob(
@@ -505,7 +510,14 @@ async def websocket_gemini_live(websocket: WebSocket):
                     had_user_audio_since_turn = True
                     if _has_speech_energy(blob_bytes):
                         had_local_speech_since_turn = True
-                        first_voice_activity_seen = True
+                        if not first_voice_activity_seen:
+                            first_voice_activity_seen = True
+                            await safe_send({
+                                "type": "speech_start",
+                                "turnId": turn_counter + 1,
+                                "source": "local_energy",
+                            })
+                            await safe_send({"type": "status", "state": "listening"})
                         if context_pending_for_session:
                             if not await send_context_once():
                                 return False
@@ -582,9 +594,6 @@ async def websocket_gemini_live(websocket: WebSocket):
                                         context_pending_for_session = True
                                 except Exception as e:
                                     print(f"⚠️ Gemini Live screenshot context send failed: {e}")
-                            if context_pending_for_session and had_user_audio_since_turn:
-                                if not await send_context_once():
-                                    return
 
                         await safe_send({
                             "type": "status",
@@ -609,9 +618,13 @@ async def websocket_gemini_live(websocket: WebSocket):
                                 activity_type = str(getattr(voice_activity, "voice_activity_type", "") or "")
                                 if "ACTIVITY_START" in activity_type:
                                     had_voice_activity_since_turn = True
-                                    first_voice_activity_seen = True
-                                    if context_pending_for_session and not await send_context_once():
-                                        return
+                                    if not first_voice_activity_seen:
+                                        first_voice_activity_seen = True
+                                        await safe_send({
+                                            "type": "speech_start",
+                                            "turnId": turn_counter + 1,
+                                            "source": "gemini_vad",
+                                        })
                                     await safe_send({"type": "status", "state": "listening"})
 
                             server_content = getattr(message, "server_content", None)
