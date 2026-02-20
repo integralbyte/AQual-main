@@ -9,10 +9,13 @@ import io
 import html
 import json
 import base64
+import asyncio
 import sys
 import time
 import uuid
 import urllib.parse
+import hashlib
+from threading import Lock
 from pathlib import Path
 import httpx
 from google import genai
@@ -31,6 +34,11 @@ app.logger.setLevel("INFO")
 GEMINI_API_KEY = get_env("GEMINI_API_KEY", "")
 GEMINI_MODEL = "gemini-3-flash-preview"
 GEMINI_THINKING_LEVEL = "LOW"
+GEMINI_LIVE_MODEL = get_env("GEMINI_LIVE_MODEL", "gemini-2.5-flash-native-audio-preview-12-2025")
+GEMINI_LIVE_MODEL_FALLBACKS = [
+    get_env("GEMINI_LIVE_FALLBACK_MODEL_1", "gemini-2.5-flash-native-audio-preview-09-2025"),
+    get_env("GEMINI_LIVE_FALLBACK_MODEL_2", ""),
+]
 ELEVENLABS_API_KEY = get_env("ELEVENLABS_API_KEY", "")
 ELEVENLABS_TTS_VOICE_ID = get_env("ELEVENLABS_TTS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
 ELEVENLABS_TTS_MODEL_ID = get_env("ELEVENLABS_TTS_MODEL_ID", "eleven_multilingual_v2")
@@ -39,10 +47,18 @@ ELEVENLABS_TTS_MODEL_ID = get_env("ELEVENLABS_TTS_MODEL_ID", "eleven_multilingua
 def get_gemini_client():
     if not GEMINI_API_KEY:
         raise RuntimeError("GEMINI_API_KEY is not configured. Set it in .env.")
-    return genai.Client(api_key=GEMINI_API_KEY)
+    return genai.Client(
+        api_key=GEMINI_API_KEY,
+        http_options={"api_version": "v1beta"},
+    )
 
 # Store images temporarily for the session
 image_store = {}
+LIVE_SESSION_TTL_SECONDS = 2 * 60 * 60
+LIVE_SESSION_MAX_ENTRIES = 200
+live_session_store = {}
+live_session_lock = Lock()
+live_screenshot_store = {}
 
 
 def _set_cors_headers(response):
@@ -79,6 +95,86 @@ def _extract_host(url: str) -> str:
         return urllib.parse.urlparse(url).netloc or ""
     except Exception:
         return ""
+
+
+def _normalize_live_conversation_id(raw_value) -> str:
+    token = re.sub(r"[^a-zA-Z0-9._:-]+", "", str(raw_value or ""))
+    return token[:120]
+
+
+def _normalize_live_model_name(model_name: str) -> str:
+    token = str(model_name or "").strip()
+    if not token:
+        return token
+    if "/" in token:
+        return token
+    return f"models/{token}"
+
+
+def _get_screenshot_hash(image_bytes: bytes) -> str:
+    if not image_bytes:
+        return ""
+    return hashlib.sha1(image_bytes).hexdigest()[:16]
+
+
+def _should_send_screenshot(conversation_id: str, screenshot_hash: str) -> bool:
+    if not screenshot_hash:
+        return False
+    if not conversation_id:
+        return True
+    now_ts = time.time()
+    with live_session_lock:
+        _prune_live_session_store(now_ts)
+        previous = str(live_screenshot_store.get(conversation_id) or "")
+        live_screenshot_store[conversation_id] = screenshot_hash
+        return previous != screenshot_hash
+
+
+def _prune_live_session_store(now_ts: float):
+    expired = [key for key, value in live_session_store.items() if now_ts - float(value.get("updated_at", 0)) > LIVE_SESSION_TTL_SECONDS]
+    for key in expired:
+        live_session_store.pop(key, None)
+        live_screenshot_store.pop(key, None)
+    if len(live_session_store) <= LIVE_SESSION_MAX_ENTRIES:
+        return
+    ordered = sorted(live_session_store.items(), key=lambda item: float(item[1].get("updated_at", 0)))
+    for key, _value in ordered[: max(0, len(live_session_store) - LIVE_SESSION_MAX_ENTRIES)]:
+        live_session_store.pop(key, None)
+        live_screenshot_store.pop(key, None)
+    for key in list(live_screenshot_store.keys()):
+        if key not in live_session_store:
+            live_screenshot_store.pop(key, None)
+
+
+def _get_live_session_handle(conversation_id: str) -> str:
+    if not conversation_id:
+        return ""
+    now_ts = time.time()
+    with live_session_lock:
+        _prune_live_session_store(now_ts)
+        entry = live_session_store.get(conversation_id)
+        if not entry:
+            return ""
+        if now_ts - float(entry.get("updated_at", 0)) > LIVE_SESSION_TTL_SECONDS:
+            live_session_store.pop(conversation_id, None)
+            return ""
+        entry["updated_at"] = now_ts
+        return str(entry.get("handle") or "")
+
+
+def _set_live_session_handle(conversation_id: str, handle: str):
+    if not conversation_id:
+        return
+    handle = str(handle or "").strip()
+    if not handle:
+        return
+    now_ts = time.time()
+    with live_session_lock:
+        _prune_live_session_store(now_ts)
+        live_session_store[conversation_id] = {
+            "handle": handle,
+            "updated_at": now_ts,
+        }
 
 
 def _clean_ai_json_text(response_text: str) -> str:
@@ -140,6 +236,333 @@ def _load_web_image_payload(data: dict):
         content_type = "image/jpeg"
 
     return image_bytes, content_type
+
+
+def _load_live_audio_payload(data: dict):
+    audio_data = (data.get("audioData") or "").strip()
+    audio_mime_type = (data.get("audioMimeType") or "audio/pcm;rate=24000").strip()
+    if not audio_data:
+        raise ValueError("No audio input provided")
+
+    try:
+        audio_bytes = base64.b64decode(audio_data, validate=True)
+    except Exception:
+        raise ValueError("Invalid base64 audio payload")
+
+    if not audio_bytes:
+        raise ValueError("Audio is empty")
+    if len(audio_bytes) > 15 * 1024 * 1024:
+        raise ValueError("Audio payload is too large")
+    if not audio_mime_type:
+        audio_mime_type = "audio/pcm;rate=24000"
+    return audio_bytes, audio_mime_type
+
+
+def _load_live_screenshot_payload(data: dict):
+    screenshot_data_url = (data.get("screenshotDataUrl") or "").strip()
+    screenshot_data = (data.get("screenshotData") or "").strip()
+    screenshot_mime_type = (data.get("screenshotMimeType") or "image/png").split(";", 1)[0].strip()
+
+    if screenshot_data_url:
+        if not screenshot_data_url.startswith("data:"):
+            raise ValueError("Screenshot must be provided as a data URL")
+        screenshot_bytes, screenshot_mime_type = _decode_data_url(screenshot_data_url)
+    elif screenshot_data:
+        try:
+            screenshot_bytes = base64.b64decode(screenshot_data, validate=True)
+        except Exception:
+            raise ValueError("Invalid base64 screenshot payload")
+    else:
+        raise ValueError("No screenshot provided")
+
+    if not screenshot_bytes:
+        raise ValueError("Screenshot is empty")
+    if len(screenshot_bytes) > 15 * 1024 * 1024:
+        raise ValueError("Screenshot is too large")
+    if not screenshot_mime_type.startswith("image/"):
+        screenshot_mime_type = "image/png"
+    return screenshot_bytes, screenshot_mime_type
+
+
+def _iter_live_models():
+    ordered = [GEMINI_LIVE_MODEL] + list(GEMINI_LIVE_MODEL_FALLBACKS)
+    seen = set()
+    for model_name in ordered:
+        token = str(model_name or "").strip()
+        if not token or token in seen:
+            continue
+        seen.add(token)
+        yield token
+
+
+def _extract_live_message_text(message):
+    text_chunks = []
+    server_content = getattr(message, "server_content", None)
+    model_turn = getattr(server_content, "model_turn", None) if server_content else None
+    parts = getattr(model_turn, "parts", None) if model_turn else None
+    if parts:
+        for part in parts:
+            part_text = getattr(part, "text", None)
+            if part_text:
+                text_chunks.append(str(part_text))
+
+    # Native-audio live models emit text via output_transcription.
+    output_transcription = getattr(server_content, "output_transcription", None) if server_content else None
+    if output_transcription and getattr(output_transcription, "text", None):
+        text_chunks.append(str(output_transcription.text))
+    return "".join(text_chunks).strip()
+
+
+def _extract_live_audio_bytes(message):
+    server_content = getattr(message, "server_content", None)
+    model_turn = getattr(server_content, "model_turn", None) if server_content else None
+    parts = getattr(model_turn, "parts", None) if model_turn else None
+    if not parts:
+        return b"", ""
+
+    audio_bytes = []
+    audio_mime = ""
+    for part in parts:
+        inline_data = getattr(part, "inline_data", None)
+        if not inline_data:
+            continue
+        mime_type = str(getattr(inline_data, "mime_type", "") or "")
+        data = getattr(inline_data, "data", None)
+        if not data:
+            continue
+        if isinstance(data, bytes):
+            payload = data
+        elif isinstance(data, bytearray):
+            payload = bytes(data)
+        elif isinstance(data, str):
+            try:
+                payload = base64.b64decode(data, validate=True)
+            except Exception:
+                continue
+        else:
+            continue
+        if not payload:
+            continue
+        if mime_type.lower().startswith("audio/"):
+            if not audio_mime:
+                audio_mime = mime_type
+            audio_bytes.append(payload)
+    return (b"".join(audio_bytes), audio_mime)
+
+
+def _extract_pcm_rate(mime_type: str, default_rate: int = 24000) -> int:
+    token = str(mime_type or "").strip().lower()
+    match = re.search(r"rate\s*=\s*(\d+)", token)
+    if not match:
+        return default_rate
+    try:
+        return max(8000, int(match.group(1)))
+    except Exception:
+        return default_rate
+
+
+def _pcm16le_to_wav_bytes(pcm_bytes: bytes, sample_rate: int = 24000, channels: int = 1) -> bytes:
+    if not pcm_bytes:
+        return b""
+    sample_width = 2
+    data_size = len(pcm_bytes)
+    byte_rate = sample_rate * channels * sample_width
+    block_align = channels * sample_width
+    file_size = 36 + data_size
+    header = (
+        b"RIFF"
+        + file_size.to_bytes(4, "little")
+        + b"WAVE"
+        + b"fmt "
+        + (16).to_bytes(4, "little")
+        + (1).to_bytes(2, "little")
+        + channels.to_bytes(2, "little")
+        + sample_rate.to_bytes(4, "little")
+        + byte_rate.to_bytes(4, "little")
+        + block_align.to_bytes(2, "little")
+        + (16).to_bytes(2, "little")
+        + b"data"
+        + data_size.to_bytes(4, "little")
+    )
+    return header + pcm_bytes
+
+
+async def _run_live_query_once(
+    client,
+    model_name: str,
+    *,
+    audio_bytes: bytes,
+    audio_mime_type: str,
+    screenshot_bytes: bytes,
+    screenshot_mime_type: str,
+    page_url: str,
+    resume_handle: str = "",
+    send_screenshot: bool = True,
+):
+    normalized_model_name = _normalize_live_model_name(model_name)
+    connect_started_at = time.perf_counter()
+
+    config = types.LiveConnectConfig(
+        # Native-audio models are served as audio turns; recover text via output transcription.
+        response_modalities=["AUDIO"],
+        temperature=0.15,
+        max_output_tokens=220,
+        thinking_config=types.ThinkingConfig(thinking_budget=0),
+        media_resolution=types.MediaResolution.MEDIA_RESOLUTION_LOW,
+        realtime_input_config=types.RealtimeInputConfig(
+            automatic_activity_detection=types.AutomaticActivityDetection(disabled=True),
+        ),
+        input_audio_transcription=types.AudioTranscriptionConfig(),
+        output_audio_transcription=types.AudioTranscriptionConfig(),
+        system_instruction=(
+            "You are AQual, an accessibility assistant. "
+            "Respond naturally in English. "
+            "Do not include internal reasoning, analysis steps, or headings. "
+            "Reply in one to three concise sentences."
+        ),
+        session_resumption=types.SessionResumptionConfig(
+            handle=resume_handle.strip() if resume_handle else None,
+        ),
+    )
+
+    async with client.aio.live.connect(model=normalized_model_name, config=config) as session:
+        connected_ms = round((time.perf_counter() - connect_started_at) * 1000, 1)
+        send_started_at = time.perf_counter()
+        await session.send_realtime_input(activity_start=types.ActivityStart())
+        if send_screenshot and screenshot_bytes:
+            await session.send_realtime_input(
+                media=types.Blob(data=screenshot_bytes, mime_type=screenshot_mime_type),
+            )
+        if page_url:
+            await session.send_realtime_input(text=f"Current page URL: {page_url}")
+        await session.send_realtime_input(
+            audio=types.Blob(data=audio_bytes, mime_type=audio_mime_type),
+        )
+        await session.send_realtime_input(activity_end=types.ActivityEnd())
+        input_sent_ms = round((time.perf_counter() - send_started_at) * 1000, 1)
+
+        answer_chunks = []
+        transcript_text = ""
+        output_transcript_text = ""
+        output_audio_chunks = []
+        output_audio_mime = ""
+        next_session_handle = ""
+        first_response_ms = 0.0
+        receive_started_at = time.perf_counter()
+        async for message in session.receive():
+            chunk = _extract_live_message_text(message)
+            if chunk:
+                answer_chunks.append(chunk)
+                if not first_response_ms:
+                    first_response_ms = round((time.perf_counter() - receive_started_at) * 1000, 1)
+
+            audio_chunk, audio_mime = _extract_live_audio_bytes(message)
+            if audio_chunk:
+                output_audio_chunks.append(audio_chunk)
+                if not output_audio_mime:
+                    output_audio_mime = audio_mime
+                if not first_response_ms:
+                    first_response_ms = round((time.perf_counter() - receive_started_at) * 1000, 1)
+
+            server_content = getattr(message, "server_content", None)
+            input_transcription = getattr(server_content, "input_transcription", None) if server_content else None
+            if input_transcription and getattr(input_transcription, "text", None):
+                transcript_text = str(input_transcription.text).strip()
+            output_transcription = getattr(server_content, "output_transcription", None) if server_content else None
+            if output_transcription and getattr(output_transcription, "text", None):
+                output_transcript_text = str(output_transcription.text).strip()
+            session_update = getattr(message, "session_resumption_update", None)
+            if session_update and getattr(session_update, "resumable", None):
+                new_handle = getattr(session_update, "new_handle", None)
+                if new_handle:
+                    next_session_handle = str(new_handle).strip()
+
+            if server_content and getattr(server_content, "turn_complete", False):
+                break
+
+        answer = "".join(answer_chunks).strip()
+        if not answer:
+            answer = output_transcript_text
+        if transcript_text and not re.search(r"[A-Za-z]", transcript_text):
+            answer = "I could not clearly hear an English question. Please hold Alt+D and try again in English."
+        output_audio_pcm = b"".join(output_audio_chunks)
+        output_audio_wav = b""
+        if output_audio_pcm:
+            pcm_rate = _extract_pcm_rate(output_audio_mime, 24000)
+            output_audio_wav = _pcm16le_to_wav_bytes(output_audio_pcm, sample_rate=pcm_rate, channels=1)
+        if not answer and output_audio_wav:
+            answer = "Spoken response generated."
+        return {
+            "answer": answer,
+            "transcript": transcript_text,
+            "model": model_name,
+            "session_handle": next_session_handle,
+            "audio_base64": base64.b64encode(output_audio_wav).decode("ascii") if output_audio_wav else "",
+            "audio_mime": "audio/wav" if output_audio_wav else "",
+            "audio_bytes": len(output_audio_wav),
+            "connected_ms": connected_ms,
+            "input_sent_ms": input_sent_ms,
+            "first_response_ms": first_response_ms,
+        }
+
+
+async def _run_live_query_with_fallbacks(
+    client,
+    *,
+    audio_bytes: bytes,
+    audio_mime_type: str,
+    screenshot_bytes: bytes,
+    screenshot_mime_type: str,
+    page_url: str,
+    resume_handle: str = "",
+    send_screenshot: bool = True,
+):
+    attempts = []
+    for model_name in _iter_live_models():
+        started_at = time.perf_counter()
+        try:
+            result = await _run_live_query_once(
+                client,
+                model_name,
+                audio_bytes=audio_bytes,
+                audio_mime_type=audio_mime_type,
+                screenshot_bytes=screenshot_bytes,
+                screenshot_mime_type=screenshot_mime_type,
+                page_url=page_url,
+                resume_handle=resume_handle,
+                send_screenshot=send_screenshot,
+            )
+            duration_ms = round((time.perf_counter() - started_at) * 1000, 1)
+            _log_gemini_event(
+                "live_model_success",
+                request_kind="gemini_live_page_query",
+                model=model_name,
+                duration_ms=duration_ms,
+                resumed_session=bool(resume_handle),
+                screenshot_sent=bool(send_screenshot),
+                connected_ms=float(result.get("connected_ms", 0.0) or 0.0),
+                input_sent_ms=float(result.get("input_sent_ms", 0.0) or 0.0),
+                first_response_ms=float(result.get("first_response_ms", 0.0) or 0.0),
+                answer_chars=len(result.get("answer", "")),
+                transcript_chars=len(result.get("transcript", "")),
+                output_audio_bytes=int(result.get("audio_bytes", 0) or 0),
+            )
+            if result.get("answer"):
+                return result
+            attempts.append(f"{model_name}: empty response")
+        except Exception as e:
+            duration_ms = round((time.perf_counter() - started_at) * 1000, 1)
+            attempts.append(f"{model_name}: {type(e).__name__}: {str(e)[:220]}")
+            _log_gemini_event(
+                "live_model_error",
+                request_kind="gemini_live_page_query",
+                model=model_name,
+                duration_ms=duration_ms,
+                error_type=type(e).__name__,
+                error_message=str(e)[:240],
+            )
+
+    raise RuntimeError("; ".join(attempts) if attempts else "No Gemini Live model is configured")
 
 
 def _generate_ai_json(client, parts, request_kind="generic", log_context=None):
@@ -1116,6 +1539,136 @@ Return ONLY valid JSON in this exact format:
     except json.JSONDecodeError:
         return jsonify({'error': 'Failed to parse AI response'}), 500
     except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/gemini-live-query', methods=['POST', 'OPTIONS'])
+def gemini_live_query():
+    """Process spoken query + screenshot context using Gemini Live."""
+    if request.method == 'OPTIONS':
+        return _set_cors_headers(jsonify({'ok': True}))
+
+    data = request.get_json() or {}
+    request_id = uuid.uuid4().hex[:10]
+    started_at = time.perf_counter()
+    page_url = (data.get("pageUrl") or "").strip()
+    conversation_id = _normalize_live_conversation_id(data.get("conversationId"))
+    resume_handle = _get_live_session_handle(conversation_id) if conversation_id else ""
+
+    try:
+        audio_bytes, audio_mime_type = _load_live_audio_payload(data)
+        screenshot_bytes = b""
+        screenshot_mime_type = "image/jpeg"
+        screenshot_hash = ""
+        send_screenshot = False
+        if data.get("screenshotDataUrl") or data.get("screenshotData"):
+            screenshot_bytes, screenshot_mime_type = _load_live_screenshot_payload(data)
+            screenshot_hash = _get_screenshot_hash(screenshot_bytes)
+            send_screenshot = _should_send_screenshot(conversation_id, screenshot_hash)
+        elif not resume_handle:
+            raise ValueError("No screenshot provided")
+        client = get_gemini_client()
+
+        _log_gemini_event(
+            "request_start",
+            request_id=request_id,
+            request_kind="gemini_live_page_query",
+            route="/gemini-live-query",
+            source="webpage",
+            model=GEMINI_LIVE_MODEL,
+            fallback_models=[m for m in _iter_live_models() if m != GEMINI_LIVE_MODEL],
+            page_host=_extract_host(page_url),
+            conversation_id=conversation_id,
+            resumed_session=bool(resume_handle),
+            audio_bytes=len(audio_bytes),
+            audio_mime=audio_mime_type,
+            screenshot_bytes=len(screenshot_bytes),
+            screenshot_mime=screenshot_mime_type,
+            screenshot_hash=screenshot_hash,
+            screenshot_sent=bool(send_screenshot),
+        )
+
+        result = asyncio.run(_run_live_query_with_fallbacks(
+            client,
+            audio_bytes=audio_bytes,
+            audio_mime_type=audio_mime_type,
+            screenshot_bytes=screenshot_bytes,
+            screenshot_mime_type=screenshot_mime_type,
+            page_url=page_url,
+            resume_handle=resume_handle,
+            send_screenshot=send_screenshot,
+        ))
+        answer = (result.get("answer") or "").strip()
+        transcript = (result.get("transcript") or "").strip()
+        if not answer and not (result.get("audio_base64") or "").strip():
+            raise RuntimeError("Gemini Live returned an empty answer")
+        next_session_handle = str(result.get("session_handle") or "").strip()
+        if conversation_id and next_session_handle:
+            _set_live_session_handle(conversation_id, next_session_handle)
+
+        duration_ms = round((time.perf_counter() - started_at) * 1000, 1)
+        _log_gemini_event(
+            "request_success",
+            request_id=request_id,
+            request_kind="gemini_live_page_query",
+            route="/gemini-live-query",
+            source="webpage",
+            duration_ms=duration_ms,
+            model=result.get("model", ""),
+            conversation_id=conversation_id,
+            resumed_session=bool(resume_handle),
+            next_session_handle=bool(next_session_handle),
+            answer_chars=len(answer),
+            transcript_chars=len(transcript),
+            audio_bytes=len(audio_bytes),
+            screenshot_bytes=len(screenshot_bytes),
+            screenshot_sent=bool(send_screenshot),
+            output_audio_bytes=int(result.get("audio_bytes", 0) or 0),
+            connected_ms=float(result.get("connected_ms", 0.0) or 0.0),
+            input_sent_ms=float(result.get("input_sent_ms", 0.0) or 0.0),
+            first_response_ms=float(result.get("first_response_ms", 0.0) or 0.0),
+        )
+
+        return jsonify({
+            "answer": answer,
+            "transcript": transcript,
+            "model": result.get("model", ""),
+            "audioBase64": result.get("audio_base64", ""),
+            "audioMimeType": result.get("audio_mime", ""),
+            "debug": {
+                "screenshotSent": bool(send_screenshot),
+                "screenshotHash": screenshot_hash,
+                "connectedMs": float(result.get("connected_ms", 0.0) or 0.0),
+                "inputSentMs": float(result.get("input_sent_ms", 0.0) or 0.0),
+                "firstResponseMs": float(result.get("first_response_ms", 0.0) or 0.0),
+            },
+        })
+
+    except ValueError as e:
+        duration_ms = round((time.perf_counter() - started_at) * 1000, 1)
+        _log_gemini_event(
+            "request_error",
+            request_id=request_id,
+            request_kind="gemini_live_page_query",
+            route="/gemini-live-query",
+            source="webpage",
+            duration_ms=duration_ms,
+            error_type=type(e).__name__,
+            error_message=str(e)[:240],
+        )
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        duration_ms = round((time.perf_counter() - started_at) * 1000, 1)
+        _log_gemini_event(
+            "request_error",
+            request_id=request_id,
+            request_kind="gemini_live_page_query",
+            route="/gemini-live-query",
+            source="webpage",
+            duration_ms=duration_ms,
+            error_type=type(e).__name__,
+            error_message=str(e)[:240],
+        )
         return jsonify({'error': str(e)}), 500
 
 
