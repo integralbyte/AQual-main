@@ -205,6 +205,9 @@ let lineGuideY = 0;
 let lineGuideRaf = null;
 let selectionSpeechAudio = null;
 let selectionSpeechBusy = false;
+let geminiLiveHost = null;
+let geminiLiveEls = null;
+let geminiLiveHideTimer = null;
 
 const HIGH_CONTRAST_CURSOR_MAP = {
   "arrow-large.png": "arrow-large-white.png",
@@ -2410,6 +2413,31 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     });
     return true;
   }
+  if (message.type === "aqual-gemini-live-status") {
+    if (window.top !== window) {
+      return;
+    }
+    const statusText = String(message.status || "Gemini Live");
+    const detailText = String(message.detail || "");
+    showGeminiLivePanel(statusText, detailText, { sticky: Boolean(message.sticky) });
+  }
+  if (message.type === "aqual-gemini-live-result") {
+    if (window.top !== window) {
+      return;
+    }
+    const ok = Boolean(message.ok);
+    if (ok) {
+      const transcript = String(message.transcript || "").trim();
+      const answer = String(message.answer || "").trim();
+      const body = transcript
+        ? `You said: ${transcript}\n\n${answer || "No answer returned."}`
+        : (answer || "No answer returned.");
+      showGeminiLivePanel("Gemini Live response", body, { sticky: true, isError: false });
+    } else {
+      const error = String(message.error || "Gemini Live request failed.");
+      showGeminiLivePanel("Gemini Live error", error, { sticky: true, isError: true });
+    }
+  }
   if (message.type === "aqual-apply") {
     applySettings(message.settings || {});
   }
@@ -3242,6 +3270,132 @@ async function speakSelectedTextWithElevenLabs() {
   }
 }
 
+function ensureGeminiLiveUi() {
+  if (geminiLiveHost && geminiLiveEls) return;
+
+  geminiLiveHost = document.createElement("div");
+  geminiLiveHost.id = "aqual-gemini-live-host";
+  geminiLiveHost.style.position = "fixed";
+  geminiLiveHost.style.right = "14px";
+  geminiLiveHost.style.bottom = "14px";
+  geminiLiveHost.style.width = "min(92vw, 380px)";
+  geminiLiveHost.style.zIndex = "2147483647";
+  geminiLiveHost.style.display = "none";
+
+  const shadow = geminiLiveHost.attachShadow({ mode: "open" });
+  shadow.innerHTML = `
+    <style>
+      :host {
+        all: initial;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      }
+      .card {
+        background: rgba(8, 15, 28, 0.97);
+        color: #e2e8f0;
+        border: 1px solid rgba(148, 163, 184, 0.32);
+        border-radius: 14px;
+        box-shadow: 0 14px 32px rgba(0, 0, 0, 0.38);
+        overflow: hidden;
+      }
+      .head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 9px 11px;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+        background: rgba(15, 23, 42, 0.9);
+      }
+      .title {
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+        color: #bfdbfe;
+      }
+      .close {
+        border: 0;
+        background: transparent;
+        color: #94a3b8;
+        font-size: 17px;
+        line-height: 1;
+        cursor: pointer;
+      }
+      .close:hover {
+        color: #f8fafc;
+      }
+      .body {
+        padding: 10px 12px;
+      }
+      .status {
+        font-size: 11px;
+        color: #93c5fd;
+        margin-bottom: 6px;
+      }
+      .text {
+        font-size: 13px;
+        line-height: 1.45;
+        color: #e2e8f0;
+        white-space: pre-wrap;
+      }
+      .text.error {
+        color: #fca5a5;
+      }
+    </style>
+    <div class="card" role="status" aria-live="polite">
+      <div class="head">
+        <span class="title">Gemini Live</span>
+        <button id="closeBtn" class="close" type="button" aria-label="Close Gemini Live panel">&times;</button>
+      </div>
+      <div class="body">
+        <div id="status" class="status"></div>
+        <div id="text" class="text"></div>
+      </div>
+    </div>
+  `;
+
+  geminiLiveEls = {
+    closeBtn: shadow.getElementById("closeBtn"),
+    status: shadow.getElementById("status"),
+    text: shadow.getElementById("text")
+  };
+
+  geminiLiveEls.closeBtn.addEventListener("click", () => {
+    if (geminiLiveHideTimer) {
+      clearTimeout(geminiLiveHideTimer);
+      geminiLiveHideTimer = null;
+    }
+    geminiLiveHost.style.display = "none";
+  });
+
+  (document.body || document.documentElement).appendChild(geminiLiveHost);
+}
+
+function showGeminiLivePanel(statusText, bodyText, options = {}) {
+  ensureGeminiLiveUi();
+  if (!geminiLiveHost || !geminiLiveEls) return;
+
+  const sticky = Boolean(options.sticky);
+  const isError = Boolean(options.isError);
+
+  geminiLiveEls.status.textContent = String(statusText || "");
+  geminiLiveEls.text.textContent = String(bodyText || "");
+  geminiLiveEls.text.classList.toggle("error", isError);
+  geminiLiveHost.style.display = "block";
+
+  if (geminiLiveHideTimer) {
+    clearTimeout(geminiLiveHideTimer);
+    geminiLiveHideTimer = null;
+  }
+  if (!sticky) {
+    geminiLiveHideTimer = setTimeout(() => {
+      geminiLiveHideTimer = null;
+      if (geminiLiveHost) {
+        geminiLiveHost.style.display = "none";
+      }
+    }, 2600);
+  }
+}
+
 let audioHotkeyActive = false;
 const pressedKeys = new Set();
 let audioHoldPingTimer = null;
@@ -3283,12 +3437,21 @@ function stopAudioHoldPing() {
   audioHoldPingTimer = null;
 }
 
+function stopAudioHotkeySession() {
+  if (!audioHotkeyActive) return;
+  audioHotkeyActive = false;
+  stopAudioHoldPing();
+  safeRuntimeMessage({ type: "aqual-audio-hold", action: "stop", holdId: activeAudioHoldId });
+  activeAudioHoldId = 0;
+}
+
 document.addEventListener("keydown", (event) => {
   pressedKeys.add(event.code);
   const isAltDown = pressedKeys.has("AltLeft") || pressedKeys.has("AltRight") || event.altKey;
   const isCDown = pressedKeys.has("KeyC") || event.code === "KeyC" || (event.key && event.key.toLowerCase() === "c");
   const isGDown = pressedKeys.has("KeyG") || event.code === "KeyG" || (event.key && event.key.toLowerCase() === "g");
   const isADown = pressedKeys.has("KeyA") || event.code === "KeyA" || (event.key && event.key.toLowerCase() === "a");
+  const isDDown = pressedKeys.has("KeyD") || event.code === "KeyD" || (event.key && event.key.toLowerCase() === "d");
   if (event.ctrlKey || event.metaKey) return;
 
   if (!event.repeat && isAltDown && isCDown) {
@@ -3306,6 +3469,14 @@ document.addEventListener("keydown", (event) => {
     return;
   }
 
+  if (!event.repeat && isAltDown && isDDown) {
+    event.preventDefault();
+    stopAudioHotkeySession();
+    safeRuntimeMessage({ type: "aqual-gemini-live-toggle" });
+    showGeminiLivePanel("Gemini Live", "Toggling live call...", { sticky: false });
+    return;
+  }
+
   if (audioHotkeyActive || event.repeat) return;
   if (!(isAltDown && isADown)) return;
   audioHotkeyActive = true;
@@ -3318,24 +3489,18 @@ document.addEventListener("keydown", (event) => {
 
 document.addEventListener("keyup", (event) => {
   pressedKeys.delete(event.code);
-  if (!audioHotkeyActive) return;
   const isAltDown = pressedKeys.has("AltLeft") || pressedKeys.has("AltRight");
-  const isADown = pressedKeys.has("KeyA");
-  if (!(isAltDown && isADown)) {
-    audioHotkeyActive = false;
-    stopAudioHoldPing();
-    safeRuntimeMessage({ type: "aqual-audio-hold", action: "stop", holdId: activeAudioHoldId });
-    activeAudioHoldId = 0;
+
+  if (audioHotkeyActive) {
+    const isADown = pressedKeys.has("KeyA");
+    if (!(isAltDown && isADown)) {
+      stopAudioHotkeySession();
+    }
   }
 }, true);
 
 window.addEventListener("blur", () => {
-  if (audioHotkeyActive) {
-    audioHotkeyActive = false;
-    stopAudioHoldPing();
-    safeRuntimeMessage({ type: "aqual-audio-hold", action: "stop", holdId: activeAudioHoldId });
-    activeAudioHoldId = 0;
-  }
+  stopAudioHotkeySession();
   stopSelectionSpeechPlayback();
   if (lineGuideOverlay) {
     lineGuideOverlay.style.opacity = "0";

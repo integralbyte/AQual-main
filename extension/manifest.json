@@ -8,6 +8,7 @@
   },
   "permissions": ["storage", "activeTab", "offscreen"],
   "host_permissions": [
+    "<all_urls>",
     "http://localhost:8000/*",
     "http://127.0.0.1:8000/*",
     "ws://localhost:8000/*",

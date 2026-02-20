@@ -51,6 +51,8 @@ const FLIGHT_STT_LOCATION_CORRECTIONS = [
   { pattern: /\bthe blend\b/gi, replacement: "dublin" }
 ];
 const LEARN_HOME_URL = "https://www.learn.ed.ac.uk";
+const DOC_SERVER_BASE = "http://localhost:8080";
+const GEMINI_LIVE_ENDPOINT = `${DOC_SERVER_BASE}/gemini-live-query`;
 
 function parseAudioMode(mode) {
   const token = String(mode || "").toLowerCase().replace(/[\s_-]+/g, "");
@@ -105,6 +107,24 @@ let holdRecordStopped = false;
 let holdFinalizeTimer = null;
 let holdStopTimer = null;
 let pendingLearnIntent = null;
+let geminiLiveHoldActive = false;
+let geminiLiveActiveHoldId = 0;
+let geminiLivePending = null;
+let geminiLiveTimeoutTimer = null;
+let geminiLiveLastTabId = 0;
+let geminiLiveCallActive = false;
+let geminiLiveCallSessionId = 0;
+let geminiLiveCallTabId = 0;
+let geminiLiveCallWindowId = chrome.windows.WINDOW_ID_CURRENT;
+let geminiLiveConversationId = "";
+let geminiLiveQueue = [];
+let geminiLiveQueueProcessing = false;
+let geminiLiveCachedScreenshotDataUrl = "";
+let geminiLiveCachedScreenshotCapturedAt = 0;
+let geminiLiveCachedScreenshotPageUrl = "";
+
+const GEMINI_LIVE_SCREENSHOT_REFRESH_MS = 12000;
+const GEMINI_LIVE_MAX_QUEUE_SIZE = 2;
 
 function normalizeSpeech(text) {
   return text
@@ -3541,8 +3561,8 @@ async function ensureOffscreenDocument() {
     }
     await chrome.offscreen.createDocument({
       url: "pages/offscreen-audio/offscreen-audio.html",
-      reasons: ["USER_MEDIA"],
-      justification: "Capture microphone audio for live transcription."
+      reasons: ["USER_MEDIA", "AUDIO_PLAYBACK"],
+      justification: "Capture mic audio and play Gemini Live voice responses."
     });
   } catch (error) {
     // Ignore if offscreen creation fails; popup recording still works.
@@ -3563,6 +3583,548 @@ function sendAudioControlMessage(payload, retryCount = 2) {
       }, 180);
     });
   });
+}
+
+function sendGeminiLiveMessageToTab(tabId, payload) {
+  if (!tabId) return;
+  chrome.tabs.sendMessage(tabId, payload, { frameId: 0 }, () => {
+    if (chrome.runtime.lastError) {
+      // Ignore missing content scripts (e.g. restricted pages).
+    }
+  });
+}
+
+function clearGeminiLiveTimeout() {
+  if (!geminiLiveTimeoutTimer) return;
+  clearTimeout(geminiLiveTimeoutTimer);
+  geminiLiveTimeoutTimer = null;
+}
+
+function queryActiveTab() {
+  return new Promise((resolve) => {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (chrome.runtime.lastError || !tabs || !tabs.length) {
+        resolve(null);
+        return;
+      }
+      resolve(tabs[0]);
+    });
+  });
+}
+
+function getTabById(tabId) {
+  return new Promise((resolve) => {
+    if (!tabId) {
+      resolve(null);
+      return;
+    }
+    chrome.tabs.get(tabId, (tab) => {
+      if (chrome.runtime.lastError || !tab) {
+        resolve(null);
+        return;
+      }
+      resolve(tab);
+    });
+  });
+}
+
+function captureVisibleTabDataUrl(windowId) {
+  return new Promise((resolve, reject) => {
+    const options = { format: "jpeg", quality: 45 };
+    chrome.tabs.captureVisibleTab(windowId, options, (dataUrl) => {
+      if (chrome.runtime.lastError || !dataUrl) {
+        reject(new Error(chrome.runtime.lastError ? chrome.runtime.lastError.message : "Failed to capture screenshot"));
+        return;
+      }
+      resolve(dataUrl);
+    });
+  });
+}
+
+async function requestGeminiLiveResponse(payload) {
+  const response = await fetch(GEMINI_LIVE_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+
+  let data = {};
+  try {
+    data = await response.json();
+  } catch (_error) {
+    data = {};
+  }
+  if (!response.ok || (data && data.error)) {
+    throw new Error((data && data.error) || `Gemini Live request failed (${response.status})`);
+  }
+  return data;
+}
+
+function resetGeminiLiveScreenshotCache() {
+  geminiLiveCachedScreenshotDataUrl = "";
+  geminiLiveCachedScreenshotCapturedAt = 0;
+  geminiLiveCachedScreenshotPageUrl = "";
+}
+
+function enqueueGeminiLiveChunk(message) {
+  const sessionId = Number(message && message.sessionId ? message.sessionId : 0);
+  if (!geminiLiveCallActive || !sessionId || sessionId !== geminiLiveCallSessionId) {
+    return;
+  }
+  const audioBase64 = String(message.audioBase64 || "");
+  if (!audioBase64) {
+    return;
+  }
+  geminiLiveQueue.push({
+    sessionId,
+    sequence: Number(message.sequence || 0),
+    audioBase64,
+    audioMimeType: String(message.audioMimeType || "audio/pcm;rate=24000"),
+    durationMs: Number(message.durationMs || 0),
+    queuedAt: Date.now()
+  });
+  if (geminiLiveQueue.length > GEMINI_LIVE_MAX_QUEUE_SIZE) {
+    geminiLiveQueue = geminiLiveQueue.slice(-GEMINI_LIVE_MAX_QUEUE_SIZE);
+  }
+  processGeminiLiveQueue().catch((error) => {
+    console.warn("[aqual-gemini-live]", JSON.stringify({
+      event: "queue_error",
+      error: error && error.message ? error.message : String(error)
+    }));
+  });
+}
+
+async function getOrRefreshGeminiLiveScreenshot(tab, pageUrl) {
+  const now = Date.now();
+  const shouldCapture = !geminiLiveCachedScreenshotDataUrl
+    || (now - geminiLiveCachedScreenshotCapturedAt) >= GEMINI_LIVE_SCREENSHOT_REFRESH_MS
+    || (pageUrl && pageUrl !== geminiLiveCachedScreenshotPageUrl);
+  if (!shouldCapture) {
+    return { screenshotDataUrl: "", screenshotCaptured: false };
+  }
+  const targetWindowId = tab && Number.isInteger(tab.windowId)
+    ? tab.windowId
+    : geminiLiveCallWindowId;
+  const dataUrl = await captureVisibleTabDataUrl(targetWindowId);
+  geminiLiveCachedScreenshotDataUrl = dataUrl;
+  geminiLiveCachedScreenshotCapturedAt = now;
+  geminiLiveCachedScreenshotPageUrl = pageUrl || "";
+  return { screenshotDataUrl: dataUrl, screenshotCaptured: true };
+}
+
+async function processGeminiLiveChunk(chunk) {
+  const tab = await getTabById(geminiLiveCallTabId) || await queryActiveTab();
+  if (tab && tab.id) {
+    geminiLiveCallTabId = tab.id;
+    geminiLiveLastTabId = tab.id;
+  }
+  if (tab && Number.isInteger(tab.windowId)) {
+    geminiLiveCallWindowId = tab.windowId;
+  }
+
+  const targetTabId = tab && tab.id ? tab.id : geminiLiveCallTabId;
+  const pageUrl = tab && tab.url ? tab.url : (geminiLiveCachedScreenshotPageUrl || "");
+  if (targetTabId && (!geminiLiveConversationId || geminiLiveConversationId === "tab-0")) {
+    geminiLiveConversationId = `tab-${targetTabId}`;
+  }
+  const conversationId = geminiLiveConversationId || `tab-${targetTabId || 0}`;
+
+  const screenshotMeta = await getOrRefreshGeminiLiveScreenshot(tab, pageUrl);
+  const payload = {
+    audioData: chunk.audioBase64,
+    audioMimeType: chunk.audioMimeType,
+    pageUrl,
+    conversationId
+  };
+  if (screenshotMeta.screenshotDataUrl) {
+    payload.screenshotDataUrl = screenshotMeta.screenshotDataUrl;
+  }
+
+  const startedAt = Date.now();
+  const data = await requestGeminiLiveResponse(payload);
+  const durationMs = Date.now() - startedAt;
+
+  console.info("[aqual-gemini-live]", JSON.stringify({
+    event: "chunk_response_ok",
+    sessionId: chunk.sessionId,
+    sequence: chunk.sequence,
+    queued_ms: Date.now() - chunk.queuedAt,
+    duration_ms: durationMs,
+    chunk_duration_ms: chunk.durationMs,
+    answer_chars: String(data.answer || "").length,
+    transcript_chars: String(data.transcript || "").length,
+    output_audio_bytes: String(data.audioBase64 || "").length,
+    model: data.model || "",
+    screenshot_sent: Boolean(data && data.debug && data.debug.screenshotSent),
+    screenshot_hash: String((data && data.debug && data.debug.screenshotHash) || ""),
+    connect_ms: Number((data && data.debug && data.debug.connectedMs) || 0),
+    input_sent_ms: Number((data && data.debug && data.debug.inputSentMs) || 0),
+    first_response_ms: Number((data && data.debug && data.debug.firstResponseMs) || 0)
+  }));
+
+  if (!geminiLiveCallActive || chunk.sessionId !== geminiLiveCallSessionId) {
+    return;
+  }
+
+  const outputAudioBase64 = String(data.audioBase64 || "");
+  const outputAudioMimeType = String(data.audioMimeType || "audio/wav");
+  if (outputAudioBase64) {
+    ensureOffscreenDocument().then(() => {
+      sendAudioControlMessage({
+        type: "aqual-gemini-live-play-audio",
+        audioBase64: outputAudioBase64,
+        audioMimeType: outputAudioMimeType
+      });
+    });
+  }
+
+  sendGeminiLiveMessageToTab(targetTabId || geminiLiveLastTabId, {
+    type: "aqual-gemini-live-result",
+    ok: true,
+    answer: String(data.answer || ""),
+    transcript: String(data.transcript || ""),
+    model: String(data.model || "")
+  });
+}
+
+async function processGeminiLiveQueue() {
+  if (geminiLiveQueueProcessing) return;
+  geminiLiveQueueProcessing = true;
+  try {
+    while (geminiLiveCallActive && geminiLiveQueue.length) {
+      const chunk = geminiLiveQueue.shift();
+      try {
+        await processGeminiLiveChunk(chunk);
+      } catch (error) {
+        console.warn("[aqual-gemini-live]", JSON.stringify({
+          event: "chunk_response_error",
+          sequence: Number(chunk && chunk.sequence ? chunk.sequence : 0),
+          error: error && error.message ? error.message : String(error)
+        }));
+        if (geminiLiveLastTabId) {
+          sendGeminiLiveMessageToTab(geminiLiveLastTabId, {
+            type: "aqual-gemini-live-status",
+            status: "Gemini Live",
+            detail: `Live call chunk failed: ${error && error.message ? error.message : "unknown error"}`,
+            sticky: true
+          });
+        }
+      }
+    }
+  } finally {
+    geminiLiveQueueProcessing = false;
+  }
+}
+
+function startGeminiLiveCall(sender = null) {
+  if (geminiLiveCallActive) {
+    return;
+  }
+  if (geminiLiveHoldActive) {
+    stopGeminiLiveHoldSession(geminiLiveActiveHoldId || 0, sender);
+  }
+  const senderTabId = sender && sender.tab && sender.tab.id ? sender.tab.id : 0;
+  const senderWindowId = sender && sender.tab && Number.isInteger(sender.tab.windowId)
+    ? sender.tab.windowId
+    : chrome.windows.WINDOW_ID_CURRENT;
+  geminiLiveCallActive = true;
+  geminiLiveCallSessionId = Date.now();
+  geminiLiveCallTabId = senderTabId || geminiLiveLastTabId || 0;
+  geminiLiveCallWindowId = senderWindowId;
+  geminiLiveConversationId = `tab-${geminiLiveCallTabId || 0}`;
+  geminiLiveQueue = [];
+  geminiLiveQueueProcessing = false;
+  resetGeminiLiveScreenshotCache();
+  clearGeminiLiveTimeout();
+  if (geminiLiveCallTabId) {
+    geminiLiveLastTabId = geminiLiveCallTabId;
+  }
+
+  console.info("[aqual-gemini-live]", JSON.stringify({
+    event: "call_start",
+    sessionId: geminiLiveCallSessionId,
+    tabId: geminiLiveCallTabId
+  }));
+
+  sendGeminiLiveMessageToTab(geminiLiveCallTabId, {
+    type: "aqual-gemini-live-status",
+    status: "Gemini Live",
+    detail: "Live call ON. Speak naturally. Press Alt+D again to stop.",
+    sticky: true
+  });
+
+  ensureOffscreenDocument().then(() => {
+    sendAudioControlMessage({
+      type: "aqual-gemini-live-stream-start",
+      sessionId: geminiLiveCallSessionId
+    });
+  });
+}
+
+function stopGeminiLiveCall(reason = "Live call stopped.", notify = true) {
+  const activeSessionId = geminiLiveCallSessionId;
+  const targetTabId = geminiLiveCallTabId || geminiLiveLastTabId;
+  geminiLiveCallActive = false;
+  geminiLiveCallSessionId = 0;
+  geminiLiveCallTabId = 0;
+  geminiLiveConversationId = "";
+  geminiLiveQueue = [];
+  geminiLiveQueueProcessing = false;
+  resetGeminiLiveScreenshotCache();
+  clearGeminiLiveTimeout();
+
+  if (activeSessionId) {
+    ensureOffscreenDocument().then(() => {
+      sendAudioControlMessage({ type: "aqual-gemini-live-stream-stop", sessionId: activeSessionId });
+      sendAudioControlMessage({ type: "aqual-gemini-live-stop-playback" });
+    });
+  }
+
+  console.info("[aqual-gemini-live]", JSON.stringify({
+    event: "call_stop",
+    sessionId: activeSessionId,
+    reason
+  }));
+
+  if (notify && targetTabId) {
+    sendGeminiLiveMessageToTab(targetTabId, {
+      type: "aqual-gemini-live-status",
+      status: "Gemini Live",
+      detail: reason,
+      sticky: true
+    });
+  }
+}
+
+function toggleGeminiLiveCall(sender = null) {
+  if (geminiLiveCallActive) {
+    stopGeminiLiveCall("Live call OFF.", true);
+    return;
+  }
+  startGeminiLiveCall(sender);
+}
+
+function startGeminiLiveHoldSession(incomingHoldId = 0, sender = null) {
+  const holdId = Number(incomingHoldId) || Date.now();
+  if (geminiLiveHoldActive && geminiLiveActiveHoldId === holdId) {
+    return;
+  }
+
+  const senderTabId = sender && sender.tab && sender.tab.id ? sender.tab.id : 0;
+  const senderWindowId = sender && sender.tab && Number.isInteger(sender.tab.windowId)
+    ? sender.tab.windowId
+    : chrome.windows.WINDOW_ID_CURRENT;
+  if (senderTabId) {
+    geminiLiveLastTabId = senderTabId;
+  }
+
+  geminiLiveHoldActive = true;
+  geminiLiveActiveHoldId = holdId;
+  geminiLivePending = {
+    holdId,
+    tabId: senderTabId,
+    windowId: senderWindowId,
+    startedAt: Date.now(),
+    state: "recording"
+  };
+  clearGeminiLiveTimeout();
+
+  console.info("[aqual-gemini-live]", JSON.stringify({
+    event: "hold_start",
+    holdId,
+    tabId: senderTabId
+  }));
+
+  sendGeminiLiveMessageToTab(senderTabId, {
+    type: "aqual-gemini-live-status",
+    status: "Gemini Live",
+    detail: "Listening... release Alt+D to send.",
+    sticky: false
+  });
+
+  ensureOffscreenDocument().then(() => {
+    sendAudioControlMessage({ type: "aqual-gemini-live-capture-start", holdId });
+  });
+}
+
+function stopGeminiLiveHoldSession(incomingHoldId = 0, sender = null) {
+  const holdId = Number(incomingHoldId) || 0;
+  if (!geminiLiveHoldActive) {
+    return;
+  }
+  if (holdId && geminiLiveActiveHoldId && holdId !== geminiLiveActiveHoldId) {
+    return;
+  }
+
+  const finalHoldId = geminiLiveActiveHoldId || holdId;
+  const senderTabId = sender && sender.tab && sender.tab.id ? sender.tab.id : 0;
+  if (!geminiLivePending || geminiLivePending.holdId !== finalHoldId) {
+    geminiLivePending = {
+      holdId: finalHoldId,
+      tabId: senderTabId,
+      windowId: sender && sender.tab && Number.isInteger(sender.tab.windowId)
+        ? sender.tab.windowId
+        : chrome.windows.WINDOW_ID_CURRENT,
+      startedAt: Date.now(),
+      state: "recording"
+    };
+  }
+  geminiLivePending.state = "awaiting_audio";
+
+  geminiLiveHoldActive = false;
+  geminiLiveActiveHoldId = 0;
+
+  console.info("[aqual-gemini-live]", JSON.stringify({
+    event: "hold_stop",
+    holdId: finalHoldId,
+    tabId: geminiLivePending.tabId || 0
+  }));
+
+  sendGeminiLiveMessageToTab(geminiLivePending.tabId || senderTabId, {
+    type: "aqual-gemini-live-status",
+    status: "Gemini Live",
+    detail: "Processing your question...",
+    sticky: true
+  });
+
+  ensureOffscreenDocument().then(() => {
+    sendAudioControlMessage({ type: "aqual-gemini-live-capture-stop", holdId: finalHoldId });
+  });
+
+  clearGeminiLiveTimeout();
+  geminiLiveTimeoutTimer = setTimeout(() => {
+    if (!geminiLivePending || geminiLivePending.holdId !== finalHoldId) {
+      return;
+    }
+    const timedOut = geminiLivePending;
+    geminiLivePending = null;
+    sendGeminiLiveMessageToTab(timedOut.tabId || 0, {
+      type: "aqual-gemini-live-result",
+      ok: false,
+      error: "Gemini Live capture timed out. Please try again."
+    });
+  }, 45000);
+}
+
+async function handleGeminiLiveCapturedAudio(message) {
+  const holdId = Number(message && message.holdId ? message.holdId : 0);
+  if (!holdId) return;
+  if (!geminiLivePending || geminiLivePending.holdId !== holdId) {
+    return;
+  }
+  const pending = geminiLivePending;
+  if (pending.state === "requesting") {
+    return;
+  }
+  pending.state = "requesting";
+  clearGeminiLiveTimeout();
+
+  const audioData = String(message.audioBase64 || "");
+  const audioMimeType = String(message.audioMimeType || "audio/pcm;rate=24000");
+  if (!audioData) {
+    const captureError = String(message.error || "").trim();
+    geminiLivePending = null;
+    sendGeminiLiveMessageToTab(pending.tabId || 0, {
+      type: "aqual-gemini-live-result",
+      ok: false,
+      error: captureError || "No audio was captured. Please hold Alt+D and try again."
+    });
+    return;
+  }
+
+  try {
+    const tab = await getTabById(pending.tabId) || await queryActiveTab();
+    if (tab && tab.id) {
+      geminiLiveLastTabId = tab.id;
+    }
+    const targetWindowId = tab && Number.isInteger(tab.windowId)
+      ? tab.windowId
+      : pending.windowId;
+    const screenshotDataUrl = await captureVisibleTabDataUrl(targetWindowId);
+    const pageUrl = tab && tab.url ? tab.url : "";
+    const screenshotChars = String(screenshotDataUrl || "").length;
+
+    sendGeminiLiveMessageToTab(tab && tab.id ? tab.id : pending.tabId, {
+      type: "aqual-gemini-live-status",
+      status: "Gemini Live",
+      detail: "Sending audio + screenshot to Gemini...",
+      sticky: true
+    });
+
+    const startedAt = Date.now();
+    const conversationId = `tab-${tab && tab.id ? tab.id : (pending.tabId || 0)}`;
+    console.info("[aqual-gemini-live]", JSON.stringify({
+      event: "request_payload",
+      holdId,
+      page_host: (() => {
+        try {
+          return pageUrl ? new URL(pageUrl).host : "";
+        } catch (_error) {
+          return "";
+        }
+      })(),
+      screenshot_chars: screenshotChars,
+      conversation_id: conversationId
+    }));
+    const data = await requestGeminiLiveResponse({
+      audioData,
+      audioMimeType,
+      screenshotDataUrl,
+      pageUrl,
+      conversationId
+    });
+    const durationMs = Date.now() - startedAt;
+
+    console.info("[aqual-gemini-live]", JSON.stringify({
+      event: "response_ok",
+      holdId,
+      duration_ms: durationMs,
+      answer_chars: String(data.answer || "").length,
+      transcript_chars: String(data.transcript || "").length,
+      output_audio_bytes: String(data.audioBase64 || "").length,
+      model: data.model || "",
+      screenshot_sent: Boolean(data && data.debug && data.debug.screenshotSent),
+      screenshot_hash: String((data && data.debug && data.debug.screenshotHash) || ""),
+      connect_ms: Number((data && data.debug && data.debug.connectedMs) || 0),
+      input_sent_ms: Number((data && data.debug && data.debug.inputSentMs) || 0),
+      first_response_ms: Number((data && data.debug && data.debug.firstResponseMs) || 0)
+    }));
+
+    const outputAudioBase64 = String(data.audioBase64 || "");
+    const outputAudioMimeType = String(data.audioMimeType || "audio/wav");
+    if (outputAudioBase64) {
+      ensureOffscreenDocument().then(() => {
+        sendAudioControlMessage({
+          type: "aqual-gemini-live-play-audio",
+          audioBase64: outputAudioBase64,
+          audioMimeType: outputAudioMimeType
+        });
+      });
+    }
+
+    sendGeminiLiveMessageToTab(tab && tab.id ? tab.id : pending.tabId, {
+      type: "aqual-gemini-live-result",
+      ok: true,
+      answer: String(data.answer || ""),
+      transcript: String(data.transcript || ""),
+      model: String(data.model || "")
+    });
+  } catch (error) {
+    console.warn("[aqual-gemini-live]", JSON.stringify({
+      event: "response_error",
+      holdId,
+      error: error && error.message ? error.message : String(error)
+    }));
+    sendGeminiLiveMessageToTab(pending.tabId || 0, {
+      type: "aqual-gemini-live-result",
+      ok: false,
+      error: error && error.message ? error.message : "Gemini Live request failed."
+    });
+  } finally {
+    if (geminiLivePending && geminiLivePending.holdId === holdId) {
+      geminiLivePending = null;
+    }
+  }
 }
 
 function maybeHandleVoiceCommand(text) {
@@ -3839,10 +4401,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.type === "aqual-audio-hold") {
     if (message.action === "start") {
+      if (geminiLiveCallActive) {
+        stopGeminiLiveCall("Live call OFF.", true);
+      }
       startAudioHoldSession(message.holdId);
     }
     if (message.action === "stop") {
       stopAudioHoldSession(message.holdId);
+    }
+  }
+  if (message.type === "aqual-gemini-live-toggle") {
+    toggleGeminiLiveCall(sender);
+  }
+  if (message.type === "aqual-gemini-live-hold") {
+    // Legacy hold flow (kept for compatibility).
+    if (message.action === "start") {
+      startGeminiLiveHoldSession(message.holdId, sender);
+    }
+    if (message.action === "stop") {
+      stopGeminiLiveHoldSession(message.holdId, sender);
     }
   }
   if (message.type === "aqual-audio-transcript") {
@@ -3862,6 +4439,66 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message.recording && (holdPendingUntil || holdTranscript.trim())) {
       // Stream ended: allow a final brief grace window then execute.
       scheduleFinalize(700);
+    }
+  }
+  if (message.type === "aqual-gemini-live-audio") {
+    handleGeminiLiveCapturedAudio(message).catch((error) => {
+      console.warn("[aqual-gemini-live]", JSON.stringify({
+        event: "audio_handle_error",
+        error: error && error.message ? error.message : String(error)
+      }));
+    });
+  }
+  if (message.type === "aqual-gemini-live-stream-chunk") {
+    enqueueGeminiLiveChunk(message);
+  }
+  if (message.type === "aqual-gemini-live-stream-state") {
+    const state = String(message.state || "");
+    const errorText = String(message.error || "");
+    console.info("[aqual-gemini-live]", JSON.stringify({
+      event: "stream_state",
+      sessionId: Number(message.sessionId || 0),
+      state,
+      error: errorText
+    }));
+    if (state === "error") {
+      stopGeminiLiveCall(`Live call stopped: ${errorText || "stream error"}`, true);
+    }
+    if (state === "listening" && geminiLiveLastTabId) {
+      sendGeminiLiveMessageToTab(geminiLiveLastTabId, {
+        type: "aqual-gemini-live-status",
+        status: "Gemini Live",
+        detail: "Live call ON. Listening...",
+        sticky: true
+      });
+    }
+  }
+  if (message.type === "aqual-gemini-live-capture-state") {
+    console.info("[aqual-gemini-live]", JSON.stringify({
+      event: "capture_state",
+      holdId: Number(message.holdId || 0),
+      state: String(message.state || ""),
+      error: String(message.error || "")
+    }));
+  }
+  if (message.type === "aqual-gemini-live-playback-state") {
+    const state = String(message.state || "");
+    const errorText = String(message.error || "");
+    console.info("[aqual-gemini-live]", JSON.stringify({
+      event: "playback_state",
+      state,
+      error: errorText
+    }));
+    if (state === "interrupted") {
+      return;
+    }
+    if (state === "error" && geminiLiveLastTabId) {
+      sendGeminiLiveMessageToTab(geminiLiveLastTabId, {
+        type: "aqual-gemini-live-status",
+        status: "Gemini Live",
+        detail: `Voice playback failed: ${errorText || "unknown error"}`,
+        sticky: true
+      });
     }
   }
   if (message.type === "aqual-screenshot") {
