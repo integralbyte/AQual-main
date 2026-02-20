@@ -5,3 +5,4 @@ mlx-whisper
 webrtcvad
 numpy
 httpx
+google-genai
