@@ -76,8 +76,10 @@ def _get_env_float(name: str, default: float, minimum=None, maximum=None) -> flo
 GEMINI_LIVE_THINKING_BUDGET = _get_env_int("GEMINI_LIVE_THINKING_BUDGET", 0, minimum=0, maximum=32768)
 GEMINI_LIVE_MAX_OUTPUT_TOKENS = _get_env_int("GEMINI_LIVE_MAX_OUTPUT_TOKENS", 160, minimum=32, maximum=2048)
 GEMINI_LIVE_TEMPERATURE = _get_env_float("GEMINI_LIVE_TEMPERATURE", 0.1, minimum=0.0, maximum=2.0)
-GEMINI_LIVE_AAD_PREFIX_PADDING_MS = _get_env_int("GEMINI_LIVE_AAD_PREFIX_PADDING_MS", 160, minimum=0, maximum=2000)
-GEMINI_LIVE_AAD_SILENCE_DURATION_MS = _get_env_int("GEMINI_LIVE_AAD_SILENCE_DURATION_MS", 240, minimum=80, maximum=4000)
+GEMINI_LIVE_INPUT_SAMPLE_RATE = _get_env_int("GEMINI_LIVE_INPUT_SAMPLE_RATE", 16000, minimum=8000, maximum=48000)
+GEMINI_LIVE_AAD_PREFIX_PADDING_MS = _get_env_int("GEMINI_LIVE_AAD_PREFIX_PADDING_MS", 120, minimum=0, maximum=2000)
+GEMINI_LIVE_AAD_SILENCE_DURATION_MS = _get_env_int("GEMINI_LIVE_AAD_SILENCE_DURATION_MS", 160, minimum=80, maximum=4000)
+GEMINI_LIVE_INPUT_SPEECH_THRESHOLD = _get_env_float("GEMINI_LIVE_INPUT_SPEECH_THRESHOLD", 0.008, minimum=0.002, maximum=0.2)
 
 # --- Configuration ---
 MODEL_NAME = "mlx-community/whisper-tiny"
@@ -101,6 +103,7 @@ class NoPrints:
         sys.stderr = self._original_stderr
 
 app = FastAPI()
+ACTIVE_GEMINI_LIVE_TOKEN = 0
 
 # Warm up model on startup
 @app.on_event("startup")
@@ -199,43 +202,6 @@ def _extract_live_audio_bytes(message):
     return (b"".join(audio_bytes), audio_mime)
 
 
-def _extract_pcm_rate(mime_type: str, default_rate: int = 24000) -> int:
-    token = str(mime_type or "").strip().lower()
-    match = re.search(r"rate\s*=\s*(\d+)", token)
-    if not match:
-        return default_rate
-    try:
-        return max(8000, int(match.group(1)))
-    except Exception:
-        return default_rate
-
-
-def _pcm16le_to_wav_bytes(pcm_bytes: bytes, sample_rate: int = 24000, channels: int = 1) -> bytes:
-    if not pcm_bytes:
-        return b""
-    sample_width = 2
-    data_size = len(pcm_bytes)
-    byte_rate = sample_rate * channels * sample_width
-    block_align = channels * sample_width
-    file_size = 36 + data_size
-    header = (
-        b"RIFF"
-        + file_size.to_bytes(4, "little")
-        + b"WAVE"
-        + b"fmt "
-        + (16).to_bytes(4, "little")
-        + (1).to_bytes(2, "little")
-        + channels.to_bytes(2, "little")
-        + sample_rate.to_bytes(4, "little")
-        + byte_rate.to_bytes(4, "little")
-        + block_align.to_bytes(2, "little")
-        + (16).to_bytes(2, "little")
-        + b"data"
-        + data_size.to_bytes(4, "little")
-    )
-    return header + pcm_bytes
-
-
 def get_gemini_client():
     if genai is None or types is None:
         raise RuntimeError("google-genai is not installed. Install dependencies from servers/audio/requirements.txt.")
@@ -265,25 +231,17 @@ def _resolve_end_sensitivity():
     return mapping.get(token, types.EndSensitivity.END_SENSITIVITY_HIGH)
 
 
-def _resolve_activity_handling():
-    token = str(get_env("GEMINI_LIVE_ACTIVITY_HANDLING", "INTERRUPT")).strip().upper()
-    mapping = {
-        "INTERRUPT": types.ActivityHandling.START_OF_ACTIVITY_INTERRUPTS,
-        "START_OF_ACTIVITY_INTERRUPTS": types.ActivityHandling.START_OF_ACTIVITY_INTERRUPTS,
-        "NO_INTERRUPTION": types.ActivityHandling.NO_INTERRUPTION,
-    }
-    return mapping.get(token, types.ActivityHandling.START_OF_ACTIVITY_INTERRUPTS)
-
-
-def _resolve_turn_coverage():
-    token = str(get_env("GEMINI_LIVE_TURN_COVERAGE", "ONLY_ACTIVITY")).strip().upper()
-    mapping = {
-        "ONLY_ACTIVITY": types.TurnCoverage.TURN_INCLUDES_ONLY_ACTIVITY,
-        "TURN_INCLUDES_ONLY_ACTIVITY": types.TurnCoverage.TURN_INCLUDES_ONLY_ACTIVITY,
-        "ALL_INPUT": types.TurnCoverage.TURN_INCLUDES_ALL_INPUT,
-        "TURN_INCLUDES_ALL_INPUT": types.TurnCoverage.TURN_INCLUDES_ALL_INPUT,
-    }
-    return mapping.get(token, types.TurnCoverage.TURN_INCLUDES_ONLY_ACTIVITY)
+def _has_speech_energy(pcm_bytes: bytes) -> bool:
+    if not pcm_bytes:
+        return False
+    try:
+        audio = np.frombuffer(pcm_bytes, dtype=np.int16)
+        if audio.size == 0:
+            return False
+        peak = float(np.max(np.abs(audio))) / 32768.0
+        return peak >= GEMINI_LIVE_INPUT_SPEECH_THRESHOLD
+    except Exception:
+        return False
 
 @app.websocket("/ws/audio")
 async def websocket_audio(websocket: WebSocket):
@@ -418,7 +376,10 @@ async def websocket_elevenlabs(websocket: WebSocket):
 
 @app.websocket("/ws/gemini-live")
 async def websocket_gemini_live(websocket: WebSocket):
+    global ACTIVE_GEMINI_LIVE_TOKEN
     await websocket.accept()
+    ACTIVE_GEMINI_LIVE_TOKEN += 1
+    session_token = ACTIVE_GEMINI_LIVE_TOKEN
     print("🟢 Gemini Live client connected")
 
     try:
@@ -442,8 +403,6 @@ async def websocket_gemini_live(websocket: WebSocket):
         temperature=GEMINI_LIVE_TEMPERATURE,
         max_output_tokens=GEMINI_LIVE_MAX_OUTPUT_TOKENS,
         thinking_config=types.ThinkingConfig(thinking_budget=GEMINI_LIVE_THINKING_BUDGET),
-        input_audio_transcription=types.AudioTranscriptionConfig(),
-        output_audio_transcription=types.AudioTranscriptionConfig(),
         realtime_input_config=types.RealtimeInputConfig(
             automatic_activity_detection=aad_config,
         ),
@@ -471,25 +430,28 @@ async def websocket_gemini_live(websocket: WebSocket):
     reconnect_attempt = 0
 
     while not stop_event.is_set():
+        if session_token != ACTIVE_GEMINI_LIVE_TOKEN:
+            print("ℹ️ Gemini Live session superseded by a newer client")
+            break
         context_pending_for_session = GEMINI_LIVE_ENABLE_CONTEXT and bool(active_screenshot_bytes)
-        input_transcript_text = ""
         output_transcript_text = ""
-        output_audio_chunks = []
-        output_audio_mime = ""
+        output_audio_bytes_since_turn = 0
         had_user_audio_since_turn = False
+        had_local_speech_since_turn = False
         had_voice_activity_since_turn = False
+        first_voice_activity_seen = False
         responding_state_sent = False
 
         def reset_turn_buffers():
-            nonlocal input_transcript_text, output_transcript_text, output_audio_chunks, output_audio_mime
-            nonlocal had_user_audio_since_turn, had_voice_activity_since_turn
-            nonlocal responding_state_sent
-            input_transcript_text = ""
+            nonlocal output_transcript_text, output_audio_bytes_since_turn
+            nonlocal had_user_audio_since_turn, had_local_speech_since_turn, had_voice_activity_since_turn
+            nonlocal first_voice_activity_seen, responding_state_sent
             output_transcript_text = ""
-            output_audio_chunks = []
-            output_audio_mime = ""
+            output_audio_bytes_since_turn = 0
             had_user_audio_since_turn = False
+            had_local_speech_since_turn = False
             had_voice_activity_since_turn = False
+            first_voice_activity_seen = False
             responding_state_sent = False
 
         try:
@@ -503,46 +465,59 @@ async def websocket_gemini_live(websocket: WebSocket):
                 })
 
                 session_stop_event = asyncio.Event()
+                context_send_lock = asyncio.Lock()
 
                 async def send_context_once():
                     nonlocal context_pending_for_session
-                    if not GEMINI_LIVE_ENABLE_CONTEXT or not context_pending_for_session:
+                    if not GEMINI_LIVE_ENABLE_CONTEXT:
                         return True
-                    try:
-                        if active_screenshot_bytes:
-                            await session.send_realtime_input(
-                                media=types.Blob(
-                                    data=active_screenshot_bytes,
-                                    mime_type=active_screenshot_mime or "image/jpeg",
-                                ),
-                            )
-                        context_pending_for_session = False
-                        return True
-                    except Exception as e:
-                        print(f"⚠️ Gemini Live context send failed, reconnecting: {e}")
-                        return False
+                    async with context_send_lock:
+                        if not context_pending_for_session:
+                            return True
+                        try:
+                            if active_screenshot_bytes:
+                                await session.send_realtime_input(
+                                    media=types.Blob(
+                                        data=active_screenshot_bytes,
+                                        mime_type=active_screenshot_mime or "image/jpeg",
+                                    ),
+                                )
+                            context_pending_for_session = False
+                            return True
+                        except Exception as e:
+                            print(f"⚠️ Gemini Live context send failed, reconnecting: {e}")
+                            return False
 
                 async def send_audio_blob(blob_bytes: bytes):
-                    nonlocal had_user_audio_since_turn
+                    nonlocal had_user_audio_since_turn, had_local_speech_since_turn, first_voice_activity_seen
                     if not blob_bytes:
                         return True
                     try:
                         await session.send_realtime_input(
                             audio=types.Blob(
                                 data=blob_bytes,
-                                mime_type="audio/pcm;rate=24000",
+                                mime_type=f"audio/pcm;rate={GEMINI_LIVE_INPUT_SAMPLE_RATE}",
                             ),
                         )
                     except Exception as e:
                         print(f"⚠️ Gemini Live audio send failed, reconnecting: {e}")
                         return False
                     had_user_audio_since_turn = True
+                    if _has_speech_energy(blob_bytes):
+                        had_local_speech_since_turn = True
+                        first_voice_activity_seen = True
+                        if context_pending_for_session:
+                            if not await send_context_once():
+                                return False
                     return True
 
                 async def receive_from_client():
                     nonlocal active_conversation_id, active_screenshot_bytes, active_screenshot_mime
                     nonlocal context_pending_for_session, had_user_audio_since_turn
                     while not stop_event.is_set() and not session_stop_event.is_set():
+                        if session_token != ACTIVE_GEMINI_LIVE_TOKEN:
+                            stop_event.set()
+                            return
                         try:
                             message = await asyncio.wait_for(websocket.receive(), timeout=0.3)
                         except asyncio.TimeoutError:
@@ -618,10 +593,14 @@ async def websocket_gemini_live(websocket: WebSocket):
                         })
 
                 async def receive_from_gemini():
-                    nonlocal turn_counter, input_transcript_text, output_transcript_text, output_audio_chunks, output_audio_mime
-                    nonlocal had_voice_activity_since_turn, responding_state_sent
+                    nonlocal turn_counter, output_transcript_text, output_audio_bytes_since_turn
+                    nonlocal had_local_speech_since_turn, had_voice_activity_since_turn
+                    nonlocal first_voice_activity_seen, responding_state_sent
                     try:
                         async for message in session.receive():
+                            if session_token != ACTIVE_GEMINI_LIVE_TOKEN:
+                                stop_event.set()
+                                return
                             if stop_event.is_set():
                                 return
 
@@ -630,6 +609,7 @@ async def websocket_gemini_live(websocket: WebSocket):
                                 activity_type = str(getattr(voice_activity, "voice_activity_type", "") or "")
                                 if "ACTIVITY_START" in activity_type:
                                     had_voice_activity_since_turn = True
+                                    first_voice_activity_seen = True
                                     if context_pending_for_session and not await send_context_once():
                                         return
                                     await safe_send({"type": "status", "state": "listening"})
@@ -638,51 +618,38 @@ async def websocket_gemini_live(websocket: WebSocket):
                             if not server_content:
                                 continue
 
-                            input_transcription = getattr(server_content, "input_transcription", None)
-                            if input_transcription and getattr(input_transcription, "text", None):
-                                input_transcript_text = str(input_transcription.text).strip()
-                                if input_transcript_text:
-                                    await safe_send({
-                                        "type": "input_transcript",
-                                        "text": input_transcript_text,
-                                    })
-
                             output_text = _extract_live_message_text(message)
-                            if output_text:
+                            if output_text and first_voice_activity_seen:
                                 output_transcript_text = output_text
                                 if not responding_state_sent:
                                     await safe_send({"type": "status", "state": "responding"})
                                     responding_state_sent = True
 
                             audio_chunk, audio_mime = _extract_live_audio_bytes(message)
-                            if audio_chunk:
-                                if not output_audio_mime:
-                                    output_audio_mime = audio_mime
-                                output_audio_chunks.append(audio_chunk)
+                            if audio_chunk and first_voice_activity_seen:
+                                output_audio_bytes_since_turn += len(audio_chunk)
+                                await safe_send({
+                                    "type": "output_audio_chunk",
+                                    "turnId": turn_counter + 1,
+                                    "audioBase64": base64.b64encode(audio_chunk).decode("ascii"),
+                                    "audioMimeType": audio_mime or "audio/pcm;rate=24000",
+                                })
                                 if not responding_state_sent:
                                     await safe_send({"type": "status", "state": "responding"})
                                     responding_state_sent = True
 
                             if getattr(server_content, "turn_complete", False):
-                                has_input_transcript = bool(str(input_transcript_text or "").strip())
-                                if not has_input_transcript and not had_voice_activity_since_turn:
+                                if not first_voice_activity_seen and not had_local_speech_since_turn:
                                     print(
-                                        "ℹ️ Ignoring Gemini turn without sufficient user speech "
-                                        f"(voice_activity={had_voice_activity_since_turn})"
+                                        "ℹ️ Ignoring Gemini turn without user speech activity "
+                                        f"(voice_activity={had_voice_activity_since_turn}, local_speech={had_local_speech_since_turn}, user_audio={had_user_audio_since_turn})"
                                     )
                                     reset_turn_buffers()
                                     await safe_send({"type": "status", "state": "listening"})
                                     continue
 
-                                output_audio_pcm = b"".join(output_audio_chunks)
-                                output_audio_wav = b""
                                 answer_text = str(output_transcript_text or "").strip()
-                                if output_audio_pcm:
-                                    pcm_rate = _extract_pcm_rate(output_audio_mime, 24000)
-                                    output_audio_wav = _pcm16le_to_wav_bytes(output_audio_pcm, sample_rate=pcm_rate, channels=1)
-                                if not answer_text and output_audio_wav:
-                                    answer_text = "Spoken response generated."
-                                if not answer_text and not output_audio_wav:
+                                if not answer_text and output_audio_bytes_since_turn == 0:
                                     print("ℹ️ Ignoring Gemini turn without output")
                                     reset_turn_buffers()
                                     await safe_send({"type": "status", "state": "listening"})
@@ -693,10 +660,7 @@ async def websocket_gemini_live(websocket: WebSocket):
                                     "type": "turn_result",
                                     "turnId": turn_counter,
                                     "answer": answer_text,
-                                    "transcript": input_transcript_text,
                                     "model": GEMINI_LIVE_MODEL,
-                                    "audioBase64": base64.b64encode(output_audio_wav).decode("ascii") if output_audio_wav else "",
-                                    "audioMimeType": "audio/wav" if output_audio_wav else "",
                                 })
                                 await safe_send({"type": "status", "state": "listening"})
                                 reset_turn_buffers()
@@ -762,6 +726,8 @@ async def websocket_gemini_live(websocket: WebSocket):
         await websocket.close()
     except Exception:
         pass
+    if session_token == ACTIVE_GEMINI_LIVE_TOKEN:
+        ACTIVE_GEMINI_LIVE_TOKEN += 1
     print("🔴 Gemini Live client disconnected")
 
 # Generate ElevenLabs single-use token
