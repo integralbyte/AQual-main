@@ -503,8 +503,9 @@ function applyDimming(enabled, level) {
 
 function applyBlueLight(enabled, level) {
   blueOverlay = ensureOverlay("aqual-blue-overlay", "aqual-blue-overlay");
-  const safeLevel = Math.max(0, Math.min(0.6, Number(level) || 0));
-  blueOverlay.style.opacity = enabled ? String(safeLevel) : "0";
+  const safeLevel = Math.max(0, Math.min(0.75, Number(level) || 0));
+  const mappedLevel = safeLevel > 0 ? Math.min(0.85, Math.pow(safeLevel, 0.82)) : 0;
+  blueOverlay.style.opacity = enabled ? String(mappedLevel) : "0";
 }
 
 function toggleNightMode(enabled) {
@@ -3546,7 +3547,7 @@ document.addEventListener("keydown", (event) => {
   pressedKeys.add(event.code);
   const isAltDown = pressedKeys.has("AltLeft") || pressedKeys.has("AltRight") || event.altKey;
   const isCDown = pressedKeys.has("KeyC") || event.code === "KeyC" || (event.key && event.key.toLowerCase() === "c");
-  const isGDown = pressedKeys.has("KeyG") || event.code === "KeyG" || (event.key && event.key.toLowerCase() === "g");
+  const isBDown = pressedKeys.has("KeyB") || event.code === "KeyB" || (event.key && event.key.toLowerCase() === "b");
   const isADown = pressedKeys.has("KeyA") || event.code === "KeyA" || (event.key && event.key.toLowerCase() === "a");
   const isDDown = pressedKeys.has("KeyD") || event.code === "KeyD" || (event.key && event.key.toLowerCase() === "d");
   if (event.ctrlKey || event.metaKey) return;
@@ -3557,7 +3558,7 @@ document.addEventListener("keydown", (event) => {
     return;
   }
 
-  if (!event.repeat && isAltDown && isGDown) {
+  if (!event.repeat && isAltDown && isBDown) {
     event.preventDefault();
     const nextEnabled = !lineGuideEnabled;
     setLineGuideEnabled(nextEnabled);
