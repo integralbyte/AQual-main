@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bionic Reader</title>
+    <title>Reading Assist Reader</title>
     <link href="https://fonts.cdnfonts.com/css/opendyslexic" rel="stylesheet">
     <style>
         * {
@@ -275,6 +275,13 @@
 
         .document strong.bionic {
             font-weight: 600;
+        }
+
+        body.reading-assist-off .document strong.bionic,
+        body.reading-assist-off .bullet-list strong.bionic,
+        body.reading-assist-off .rephrased-text strong.bionic,
+        body.reading-assist-off .desc-text strong.bionic {
+            font-weight: inherit;
         }
 
         .document.shift-mode {
@@ -775,8 +782,8 @@
 <body>
     <div class="upload-screen" id="uploadScreen">
         <div class="upload-container">
-            <h1>Bionic Reader</h1>
-            <p>Convert DOCX documents to bionic reading format</p>
+            <h1>Reading Assist Reader</h1>
+            <p>Convert DOCX documents for Reading Assist</p>
 
             <div class="error-msg" id="errorMsg"></div>
 
@@ -802,12 +809,13 @@
             </div>
             <div class="toolbar-center">
                 <div class="mode-toggle">
-                    <button class="mode-btn active" data-mode="summarize">Summarize</button>
+                    <button class="mode-btn active" data-mode="summarize">Summarise</button>
                     <button class="mode-btn" data-mode="rephrase">Rephrase</button>
                 </div>
                 <span class="style-indicator" id="styleIndicator">No style set</span>
             </div>
             <div class="toolbar-actions">
+                <button class="toolbar-btn" id="readingAssistToggleBtn">Bionic Reading: Off</button>
                 <button class="toolbar-btn" id="settingsBtn">Settings</button>
                 <button class="toolbar-btn" id="dyslexiaBtn">Dyslexia Font</button>
                 <button class="toolbar-btn" id="closeViewerBtn">Close</button>

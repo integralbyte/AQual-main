@@ -18,11 +18,25 @@
         const styleUploadLabel = document.getElementById('styleUploadLabel');
         const styleIndicator = document.getElementById('styleIndicator');
         const clearStyleBtn = document.getElementById('clearStyleBtn');
+        const readingAssistToggleBtn = document.getElementById('readingAssistToggleBtn');
 
         let shiftPressed = false;
         let currentHighlight = null;
         let currentMode = 'summarize';
         let writingSample = '';
+        let readingAssistEnabled = false;
+
+        function applyReadingAssistState() {
+            document.body.classList.toggle('reading-assist-off', !readingAssistEnabled);
+            if (!readingAssistToggleBtn) return;
+            readingAssistToggleBtn.textContent = `Bionic Reading: ${readingAssistEnabled ? 'On' : 'Off'}`;
+            readingAssistToggleBtn.classList.toggle('active', readingAssistEnabled);
+        }
+
+        function toggleReadingAssist() {
+            readingAssistEnabled = !readingAssistEnabled;
+            applyReadingAssistState();
+        }
 
         function loadStoredDocument() {
             if (!chrome?.storage?.local) return;
@@ -164,7 +178,7 @@
                 if (data.error) {
                     para.classList.remove('loading');
                     para.innerHTML = originalHtml;
-                    console.error('Summarize error:', data.error);
+                    console.error('Summarise error:', data.error);
                     return;
                 }
 
@@ -201,7 +215,7 @@
             } catch (err) {
                 para.classList.remove('loading');
                 para.innerHTML = originalHtml;
-                console.error('Summarize failed:', err);
+                console.error('Summarise failed:', err);
             }
         }
 
@@ -593,6 +607,9 @@
             fileInput.click();
         });
 
+        if (readingAssistToggleBtn) {
+            readingAssistToggleBtn.addEventListener('click', toggleReadingAssist);
+        }
         settingsBtn.addEventListener('click', toggleSettings);
         settingsCloseBtn.addEventListener('click', toggleSettings);
         closeViewerBtn.addEventListener('click', closeViewer);
@@ -742,4 +759,5 @@
             btn.classList.toggle('active');
         }
 
+        applyReadingAssistState();
         loadStoredDocument();
