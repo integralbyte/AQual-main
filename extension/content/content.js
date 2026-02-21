@@ -187,18 +187,9 @@ let cursorGuardObserver = null;
 let shiftPressed = false;
 let shiftHoverImage = null;
 let describedImage = null;
-let describedImagePayload = null;
+let describedImageCaptionEl = null;
 let describedImageText = "";
 let describeRequestSerial = 0;
-let captionHost = null;
-let captionEls = null;
-let captionRepositionRaf = null;
-let chatHost = null;
-let chatEls = null;
-let chatInFlight = false;
-let chatHistory = [];
-let chatDrag = null;
-let previousUserSelect = "";
 let lineGuideOverlay = null;
 let lineGuideEnabled = false;
 let lineGuideY = 0;
@@ -2486,9 +2477,8 @@ function clampNumber(value, min, max) {
 }
 
 function isImageAssistEvent(event) {
-  if (!event || !event.composedPath) return false;
-  const path = event.composedPath();
-  return (captionHost && path.includes(captionHost)) || (chatHost && path.includes(chatHost));
+  const target = event && event.target;
+  return Boolean(target && target.closest && target.closest(".aqual-inline-image-caption"));
 }
 
 function isDescribableImage(image) {
@@ -2596,349 +2586,6 @@ async function buildDescribedImagePayload(image) {
   return payload;
 }
 
-function ensureCaptionUi() {
-  if (captionHost && captionEls) return;
-
-  captionHost = document.createElement("div");
-  captionHost.id = "aqual-image-caption-host";
-  captionHost.style.position = "fixed";
-  captionHost.style.left = "12px";
-  captionHost.style.top = "12px";
-  captionHost.style.width = "320px";
-  captionHost.style.maxWidth = "min(92vw, 420px)";
-  captionHost.style.zIndex = "2147483647";
-  captionHost.style.display = "none";
-
-  const shadow = captionHost.attachShadow({ mode: "open" });
-  shadow.innerHTML = `
-    <style>
-      :host {
-        all: initial;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      }
-      .card {
-        background: rgba(9, 15, 27, 0.95);
-        color: #f8fafc;
-        border: 1px solid rgba(148, 163, 184, 0.35);
-        border-radius: 14px;
-        box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
-        padding: 10px 12px;
-      }
-      .head {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 10px;
-      }
-      .title {
-        font-size: 12px;
-        font-weight: 600;
-        letter-spacing: 0.02em;
-        text-transform: uppercase;
-        color: #cbd5e1;
-      }
-      .close {
-        border: 0;
-        background: transparent;
-        color: #94a3b8;
-        cursor: pointer;
-        font-size: 18px;
-        line-height: 1;
-        padding: 0;
-      }
-      .close:hover {
-        color: #f8fafc;
-      }
-      .desc {
-        margin-top: 8px;
-        font-size: 13px;
-        line-height: 1.4;
-        color: #e2e8f0;
-        max-height: 170px;
-        overflow: auto;
-        white-space: pre-wrap;
-      }
-      .ask {
-        margin-top: 8px;
-        border: 0;
-        border-radius: 999px;
-        background: #1d4ed8;
-        color: #ffffff;
-        padding: 4px 9px;
-        font-size: 11px;
-        cursor: pointer;
-      }
-      .ask[disabled] {
-        opacity: 0.55;
-        cursor: not-allowed;
-      }
-    </style>
-    <div class="card" role="dialog" aria-live="polite" aria-label="Image description">
-      <div class="head">
-        <span class="title">Image Description</span>
-        <button id="closeBtn" class="close" type="button" aria-label="Close image description">&times;</button>
-      </div>
-      <div id="descText" class="desc"></div>
-      <button id="askBtn" class="ask" type="button" disabled>Ask follow-up</button>
-    </div>
-  `;
-
-  captionEls = {
-    closeBtn: shadow.getElementById("closeBtn"),
-    descText: shadow.getElementById("descText"),
-    askBtn: shadow.getElementById("askBtn")
-  };
-
-  captionEls.closeBtn.addEventListener("click", () => {
-    captionHost.style.display = "none";
-    closeChatUi(true);
-  });
-
-  captionEls.askBtn.addEventListener("click", () => {
-    openChatUi();
-  });
-
-  (document.body || document.documentElement).appendChild(captionHost);
-}
-
-function ensureChatUi() {
-  if (chatHost && chatEls) return;
-
-  chatHost = document.createElement("div");
-  chatHost.id = "aqual-image-chat-host";
-  chatHost.style.position = "fixed";
-  chatHost.style.right = "16px";
-  chatHost.style.bottom = "16px";
-  chatHost.style.width = "340px";
-  chatHost.style.height = "290px";
-  chatHost.style.minWidth = "260px";
-  chatHost.style.minHeight = "220px";
-  chatHost.style.maxWidth = "min(90vw, 680px)";
-  chatHost.style.maxHeight = "min(80vh, 760px)";
-  chatHost.style.resize = "both";
-  chatHost.style.overflow = "hidden";
-  chatHost.style.zIndex = "2147483647";
-  chatHost.style.display = "none";
-
-  const shadow = chatHost.attachShadow({ mode: "open" });
-  shadow.innerHTML = `
-    <style>
-      :host {
-        all: initial;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      }
-      .box {
-        width: 100%;
-        height: 100%;
-        display: flex;
-        flex-direction: column;
-        background: rgba(10, 14, 24, 0.97);
-        border: 1px solid rgba(148, 163, 184, 0.35);
-        border-radius: 16px;
-        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.38);
-        overflow: hidden;
-      }
-      .head {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 10px;
-        padding: 10px 12px;
-        background: rgba(15, 23, 42, 0.95);
-        border-bottom: 1px solid rgba(148, 163, 184, 0.24);
-        cursor: move;
-        user-select: none;
-      }
-      .title {
-        color: #e2e8f0;
-        font-size: 12px;
-        font-weight: 600;
-        letter-spacing: 0.02em;
-        text-transform: uppercase;
-      }
-      .close {
-        border: 0;
-        background: transparent;
-        color: #94a3b8;
-        cursor: pointer;
-        font-size: 18px;
-        line-height: 1;
-        padding: 0;
-      }
-      .close:hover {
-        color: #f8fafc;
-      }
-      .messages {
-        flex: 1;
-        overflow: auto;
-        padding: 10px;
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-      }
-      .msg {
-        max-width: 88%;
-        padding: 8px 10px;
-        border-radius: 12px;
-        font-size: 12px;
-        line-height: 1.4;
-        white-space: pre-wrap;
-      }
-      .msg.user {
-        align-self: flex-end;
-        background: #2563eb;
-        color: #ffffff;
-      }
-      .msg.assistant {
-        align-self: flex-start;
-        background: #1f2937;
-        color: #e2e8f0;
-      }
-      .msg.pending {
-        opacity: 0.7;
-      }
-      .composer {
-        display: flex;
-        gap: 8px;
-        padding: 10px;
-        border-top: 1px solid rgba(148, 163, 184, 0.2);
-        background: rgba(2, 6, 23, 0.82);
-      }
-      textarea {
-        flex: 1;
-        resize: none;
-        border: 1px solid #334155;
-        border-radius: 10px;
-        padding: 8px;
-        font-size: 12px;
-        color: #e2e8f0;
-        background: #0f172a;
-        min-height: 36px;
-        max-height: 120px;
-      }
-      textarea:focus {
-        outline: 1px solid #3b82f6;
-      }
-      button.send {
-        border: 0;
-        border-radius: 10px;
-        background: #1d4ed8;
-        color: #ffffff;
-        font-size: 12px;
-        padding: 0 12px;
-        cursor: pointer;
-      }
-      button.send:disabled {
-        opacity: 0.6;
-        cursor: not-allowed;
-      }
-    </style>
-    <div class="box" role="dialog" aria-label="Image follow-up chat">
-      <div id="dragHandle" class="head">
-        <span class="title">Image Follow-up</span>
-        <button id="closeBtn" class="close" type="button" aria-label="Close image follow-up">&times;</button>
-      </div>
-      <div id="messages" class="messages"></div>
-      <form id="chatForm" class="composer">
-        <textarea id="chatInput" placeholder="Ask about this image..." aria-label="Ask about this image"></textarea>
-        <button id="sendBtn" class="send" type="submit">Send</button>
-      </form>
-    </div>
-  `;
-
-  chatEls = {
-    closeBtn: shadow.getElementById("closeBtn"),
-    dragHandle: shadow.getElementById("dragHandle"),
-    messages: shadow.getElementById("messages"),
-    chatForm: shadow.getElementById("chatForm"),
-    chatInput: shadow.getElementById("chatInput"),
-    sendBtn: shadow.getElementById("sendBtn")
-  };
-
-  chatEls.closeBtn.addEventListener("click", () => closeChatUi(false));
-  chatEls.chatForm.addEventListener("submit", submitChatFollowUp);
-  chatEls.chatInput.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      chatEls.chatForm.requestSubmit();
-    }
-  });
-
-  chatEls.dragHandle.addEventListener("pointerdown", (event) => {
-    if (event.button !== 0) return;
-    if (event.target && event.target.closest && event.target.closest("button")) return;
-
-    const rect = chatHost.getBoundingClientRect();
-    chatHost.style.left = `${Math.round(rect.left)}px`;
-    chatHost.style.top = `${Math.round(rect.top)}px`;
-    chatHost.style.right = "auto";
-    chatHost.style.bottom = "auto";
-
-    chatDrag = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      left: rect.left,
-      top: rect.top
-    };
-    previousUserSelect = document.documentElement.style.userSelect;
-    document.documentElement.style.userSelect = "none";
-    chatEls.dragHandle.setPointerCapture(event.pointerId);
-  });
-
-  chatEls.dragHandle.addEventListener("pointermove", (event) => {
-    if (!chatDrag || event.pointerId !== chatDrag.pointerId) return;
-    event.preventDefault();
-    const width = chatHost.offsetWidth;
-    const height = chatHost.offsetHeight;
-    const nextLeft = chatDrag.left + (event.clientX - chatDrag.startX);
-    const nextTop = chatDrag.top + (event.clientY - chatDrag.startY);
-    const maxLeft = Math.max(8, window.innerWidth - width - 8);
-    const maxTop = Math.max(8, window.innerHeight - height - 8);
-    chatHost.style.left = `${Math.round(clampNumber(nextLeft, 8, maxLeft))}px`;
-    chatHost.style.top = `${Math.round(clampNumber(nextTop, 8, maxTop))}px`;
-  });
-
-  const stopDrag = (event) => {
-    if (!chatDrag || event.pointerId !== chatDrag.pointerId) return;
-    chatEls.dragHandle.releasePointerCapture(event.pointerId);
-    chatDrag = null;
-    document.documentElement.style.userSelect = previousUserSelect || "";
-    previousUserSelect = "";
-  };
-  chatEls.dragHandle.addEventListener("pointerup", stopDrag);
-  chatEls.dragHandle.addEventListener("pointercancel", stopDrag);
-
-  (document.body || document.documentElement).appendChild(chatHost);
-}
-
-function closeChatUi(resetHistory) {
-  if (chatHost) {
-    chatHost.style.display = "none";
-  }
-  chatInFlight = false;
-  if (chatEls) {
-    chatEls.sendBtn.disabled = false;
-  }
-  if (resetHistory) {
-    chatHistory = [];
-    if (chatEls) {
-      chatEls.messages.innerHTML = "";
-      chatEls.chatInput.value = "";
-    }
-  }
-}
-
-function appendChatMessage(role, text, pending) {
-  if (!chatEls) return null;
-  const message = document.createElement("div");
-  message.className = `msg ${role}${pending ? " pending" : ""}`;
-  message.textContent = text;
-  chatEls.messages.appendChild(message);
-  chatEls.messages.scrollTop = chatEls.messages.scrollHeight;
-  return message;
-}
-
 async function fetchJson(url, payload) {
   const response = await fetch(url, {
     method: "POST",
@@ -2959,75 +2606,125 @@ async function fetchJson(url, payload) {
   return data;
 }
 
-function requestCaptionReposition() {
-  if (captionRepositionRaf !== null) return;
-  captionRepositionRaf = requestAnimationFrame(() => {
-    captionRepositionRaf = null;
-    if (!captionHost || captionHost.style.display === "none") return;
-    if (!describedImage || !describedImage.isConnected) {
-      captionHost.style.display = "none";
-      closeChatUi(true);
-      return;
-    }
-
-    const rect = describedImage.getBoundingClientRect();
-    const width = clampNumber(Math.round(rect.width), 260, 420);
-    captionHost.style.width = `${width}px`;
-    const cardRect = captionHost.getBoundingClientRect();
-
-    let left = clampNumber(rect.left, 8, Math.max(8, window.innerWidth - cardRect.width - 8));
-    let top = rect.bottom + 10;
-    if (top + cardRect.height > window.innerHeight - 8) {
-      top = rect.top - cardRect.height - 10;
-    }
-    top = clampNumber(top, 8, Math.max(8, window.innerHeight - cardRect.height - 8));
-
-    captionHost.style.left = `${Math.round(left)}px`;
-    captionHost.style.top = `${Math.round(top)}px`;
-  });
-}
-
-function showCaptionLoading() {
-  ensureCaptionUi();
-  captionEls.descText.textContent = "Describing image...";
-  captionEls.askBtn.disabled = true;
-  captionHost.style.display = "block";
-  requestCaptionReposition();
-}
-
-function showCaptionError(message) {
-  ensureCaptionUi();
-  captionEls.descText.textContent = message;
-  captionEls.askBtn.disabled = true;
-  captionHost.style.display = "block";
-  requestCaptionReposition();
-}
-
-function showCaptionDescription(description) {
-  ensureCaptionUi();
-  captionEls.descText.textContent = description;
-  captionEls.askBtn.disabled = false;
-  captionHost.style.display = "block";
-  requestCaptionReposition();
-}
-
-function openChatUi() {
-  if (!describedImagePayload || !describedImageText) return;
-  ensureChatUi();
-  chatHost.style.display = "block";
-  if (!chatHistory.length && chatEls.messages.children.length === 0) {
-    appendChatMessage("assistant", "Ask anything specific about this image.", false);
+function clearInlineImageCaption() {
+  if (describedImage) {
+    describedImage.classList.remove("aqual-inline-image-described");
   }
-  chatEls.chatInput.focus();
+  if (describedImageCaptionEl && describedImageCaptionEl.isConnected) {
+    describedImageCaptionEl.remove();
+  }
+  describedImage = null;
+  describedImageCaptionEl = null;
+  describedImageText = "";
+}
+
+function resolveInlineCaptionAnchor(image) {
+  if (!image || !image.isConnected) return image;
+
+  const figure = image.closest("figure");
+  if (figure) {
+    const figureImages = figure.querySelectorAll("img");
+    if (figureImages.length === 1 && figureImages[0] === image) {
+      return figure;
+    }
+  }
+
+  const parent = image.parentElement;
+  if (parent && parent.tagName && parent.tagName.toLowerCase() === "a" && parent.children.length === 1) {
+    return parent;
+  }
+
+  return image;
+}
+
+function syncInlineCaptionGeometry(image, caption) {
+  if (!image || !caption || !image.isConnected || !caption.isConnected) return;
+  const imageRect = image.getBoundingClientRect();
+  const width = Math.round(imageRect.width);
+  if (width > 0) {
+    caption.style.width = `${width}px`;
+    caption.style.maxWidth = `${width}px`;
+  } else {
+    caption.style.width = "";
+    caption.style.maxWidth = "";
+  }
+
+  const imageStyle = window.getComputedStyle(image);
+  const captionParent = caption.parentElement;
+  const parentStyle = captionParent ? window.getComputedStyle(captionParent) : null;
+  const centeredByMargins = imageStyle.marginLeft === "auto" && imageStyle.marginRight === "auto";
+  const centeredByTextAlign = parentStyle && parentStyle.textAlign === "center";
+  const centered = centeredByMargins || centeredByTextAlign;
+  caption.style.marginLeft = centered ? "auto" : "";
+  caption.style.marginRight = centered ? "auto" : "";
+}
+
+function ensureInlineImageCaption(image) {
+  if (!image || !image.isConnected) return null;
+  const captionAnchor = resolveInlineCaptionAnchor(image);
+  if (!captionAnchor) return null;
+
+  const existing = captionAnchor.nextElementSibling;
+  if (existing && existing.classList && existing.classList.contains("aqual-inline-image-caption")) {
+    describedImageCaptionEl = existing;
+    return existing;
+  }
+
+  if (describedImageCaptionEl && describedImageCaptionEl.isConnected) {
+    describedImageCaptionEl.remove();
+  }
+
+  const caption = document.createElement("div");
+  caption.className = "aqual-inline-image-caption";
+  caption.innerHTML = `
+    <span class="aqual-inline-image-caption-label">Image description</span>
+    <div class="aqual-inline-image-caption-text"></div>
+  `;
+  captionAnchor.insertAdjacentElement("afterend", caption);
+  describedImageCaptionEl = caption;
+  syncInlineCaptionGeometry(image, caption);
+  return caption;
+}
+
+function showInlineImageCaption(image, message) {
+  if (!image || !image.isConnected) return;
+
+  if (describedImage && describedImage !== image) {
+    describedImage.classList.remove("aqual-inline-image-described");
+  }
+
+  describedImage = image;
+  describedImage.classList.add("aqual-inline-image-described");
+
+  const caption = ensureInlineImageCaption(image);
+  if (!caption) return;
+  syncInlineCaptionGeometry(image, caption);
+  const textEl = caption.querySelector(".aqual-inline-image-caption-text");
+  if (textEl) {
+    textEl.textContent = message;
+  }
+}
+
+function showCaptionLoading(image) {
+  showInlineImageCaption(image, "Describing image...");
+}
+
+function showCaptionError(image, message) {
+  showInlineImageCaption(image, message);
+}
+
+function showCaptionDescription(image, description) {
+  showInlineImageCaption(image, description);
 }
 
 async function describeImageFromPage(image) {
-  describedImage = image;
-  describedImagePayload = null;
+  if (!isDescribableImage(image)) return;
+  if (describedImage && describedImage !== image) {
+    clearInlineImageCaption();
+  }
+
   describedImageText = "";
-  chatHistory = [];
-  closeChatUi(true);
-  showCaptionLoading();
+  showCaptionLoading(image);
 
   const requestId = ++describeRequestSerial;
   try {
@@ -3035,66 +2732,14 @@ async function describeImageFromPage(image) {
     const data = await fetchJson(`${DOC_SERVER_BASE}/describe-web-image`, payload);
     if (requestId !== describeRequestSerial) return;
 
-    describedImagePayload = payload;
     describedImageText = (data.description || "").trim();
     if (!describedImageText) {
       throw new Error("No description returned");
     }
-    showCaptionDescription(describedImageText);
+    showCaptionDescription(image, describedImageText);
   } catch (error) {
     if (requestId !== describeRequestSerial) return;
-    showCaptionError(`Couldn't describe this image: ${error.message}`);
-  }
-}
-
-async function askFollowUpAboutImage(question, history) {
-  if (!describedImagePayload) {
-    throw new Error("No active image context");
-  }
-  const payload = {
-    ...describedImagePayload,
-    question,
-    description: describedImageText,
-    history
-  };
-  const data = await fetchJson(`${DOC_SERVER_BASE}/ask-web-image`, payload);
-  const answer = (data.answer || "").trim();
-  if (!answer) {
-    throw new Error("No answer returned");
-  }
-  return answer;
-}
-
-async function submitChatFollowUp(event) {
-  event.preventDefault();
-  if (!chatEls || chatInFlight) return;
-
-  const question = (chatEls.chatInput.value || "").trim();
-  if (!question) return;
-
-  chatEls.chatInput.value = "";
-  appendChatMessage("user", question, false);
-  const pending = appendChatMessage("assistant", "Thinking...", true);
-  chatInFlight = true;
-  chatEls.sendBtn.disabled = true;
-
-  const historyForRequest = [...chatHistory, { role: "user", content: question }];
-  try {
-    const answer = await askFollowUpAboutImage(question, historyForRequest);
-    if (pending) {
-      pending.textContent = answer;
-      pending.classList.remove("pending");
-    }
-    chatHistory = [...historyForRequest, { role: "assistant", content: answer }];
-  } catch (error) {
-    if (pending) {
-      pending.textContent = `Sorry, I couldn't answer that: ${error.message}`;
-      pending.classList.remove("pending");
-    }
-  } finally {
-    chatInFlight = false;
-    chatEls.sendBtn.disabled = false;
-    chatEls.messages.scrollTop = chatEls.messages.scrollHeight;
+    showCaptionError(image, `Couldn't describe this image: ${error.message}`);
   }
 }
 
@@ -3121,8 +2766,10 @@ function handleShiftImageClick(event) {
 }
 
 function initializeImageAssist() {
-  window.addEventListener("scroll", requestCaptionReposition, true);
-  window.addEventListener("resize", requestCaptionReposition, true);
+  window.addEventListener("resize", () => {
+    if (!describedImage || !describedImageCaptionEl) return;
+    syncInlineCaptionGeometry(describedImage, describedImageCaptionEl);
+  }, true);
 
   document.addEventListener("keydown", (event) => {
     if (event.key === "Shift") {

@@ -17,6 +17,44 @@
   cursor: crosshair !important;
 }
 
+.aqual-inline-image-described {
+  box-shadow: 0 0 0 3px #fff3cd, 0 4px 12px rgba(0, 0, 0, 0.15) !important;
+}
+
+.aqual-inline-image-caption {
+  margin-top: 0 !important;
+  margin-left: 0 !important;
+  padding: 1em !important;
+  background: #e8f5e9 !important;
+  border-radius: 0 0 8px 8px !important;
+  text-align: left !important;
+  box-sizing: border-box !important;
+  display: block !important;
+  max-width: 100% !important;
+}
+
+.aqual-inline-image-caption-label {
+  display: block !important;
+  font-size: 0.7rem !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.5px !important;
+  color: #48bb78 !important;
+  font-weight: 600 !important;
+  margin-bottom: 0.5em !important;
+}
+
+.aqual-inline-image-caption-text {
+  margin-top: 0.25em !important;
+  padding: 1em 1.25em !important;
+  background: #f8f9fa !important;
+  border-left: 3px solid #48bb78 !important;
+  border-radius: 0 6px 6px 0 !important;
+  font-size: 0.9rem !important;
+  color: #444 !important;
+  line-height: 1.6 !important;
+  white-space: pre-wrap !important;
+}
+
 .aqual-line-guide-overlay {
   position: fixed;
   left: 0;
