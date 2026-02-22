@@ -1,5 +1,0 @@
-Shake2Dial Pro can help vision impaired people or people at situation when eye-free call is necessary. It is design with very simple and clear interface, with a single purpose: make a phone call eye-free by a few shakes.
-
-User can store up to 6 contacts in the app from the phone book, once setup, user can start to make call by shaking, and follow the voice instruction.
-
-Shake from left to right will navigate to next contact, and the contact's name will be read out automatically. Shake up to down will trigger the phone call message box, user just need to touch the top left ok button to start the dial.

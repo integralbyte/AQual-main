@@ -1,2 +1,0 @@
-Access Check is an iOS app designed to help users report accessibility obstacles. Reports are added to an interactive map that can be filtered by all ADA-defined disabilities. Reports can also be shared on a variety of social media platforms, to raise awareness and inform responsible entities.
-Access Check empowers users to turn frustration into action by generating reports, and also provides a way of learning about accessibility issues through its globally responsive crowd-sourced map. Let's fix things!

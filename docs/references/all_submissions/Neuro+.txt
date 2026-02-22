@@ -1,8 +1,0 @@
-Recent research shows that the ability to pay attention at a young age is the leading predictor of future academic achievement. Unfortunately, parents and teachers currently have few means by which to improve children’s attention. They’re actively seeking ways to help kids develop these skills.
-Furthermore, one in eight children in the U.S. has been diagnosed with ADHD (Attention Deficit Hyperactivity Disorder). Most of these diagnosed children take stimulant medications like Adderall® or Ritalin®. These pharmaceuticals are known to cause serious side effects, including loss of appetite and sleep disorders, and carry high risks of dependency and abuse. They’ve also been shown to cause no long-term improvement in academic outcomes. Parents are desperate for evidence-based, non- pharmacological solutions for children with attention disorders.
-NEURO+ is a software-as-a-service attention training platform that interfaces with an EEG headset. NEURO+ trains users’ attention skills with three proven protocols to address the three core symptoms of attention disorders: inattention, hyperactivity, and impulsivity.
-(1) Neurofeedback from EEG sensors improves users’ attentive focus and concentration
-(2) Motion biofeedback from headset accelerometers reduces users’ hyperactivity and involuntary
-movements/tics.
-(3) Go/No-go cognitive training exercises help users build self-control and dampen impulsive
-behavior.

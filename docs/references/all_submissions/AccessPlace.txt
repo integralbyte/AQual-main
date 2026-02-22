@@ -1,3 +1,0 @@
-AccessPlace is a multi-platform mobile and web application designed to allow end-users to post experiences and obtain Personalized Accessibility Information about buildings (initially targeting restaurants), tailored to the individual's functional impairments.
-
-We combine crowd-sourced accessibility information with evaluations made by trained raters in order to provide individuals with the fore-knowledge needed to prepare for the challenges they may face when going out.

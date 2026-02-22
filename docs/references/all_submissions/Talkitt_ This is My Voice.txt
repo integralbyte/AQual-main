@@ -1,6 +1,0 @@
-Speech is the most basic and essential means for us to communicate with each other.
-However for millions of people (1.5% of the Western world's population), who live with speech disabilities, speaking and being understood is not an option.
-
-There are currently a variety of solutions (eye tracking, head tracking, and communication boards) however, these solutions are often expensive, awkward and unnatural to use, and degrade natural speech.
-
-Talkitt is an innovative solution that will enable people that have motor, speech, and language disorders to easily communicate using their own voice, by translating unintelligible pronunciation into understandable speech. The software based solution can run on any mobile or wearable device, allowing the person to communicate freely with anyone anywhere.

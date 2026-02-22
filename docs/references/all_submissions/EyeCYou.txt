@@ -1,3 +1,0 @@
-EyeCYou is an assisstive technology for the visually impaired, it gives the visually impaired a description of who they meet.This technology when activated would assist the user by giving some information like presence of a person, reports the skin color, reports the shirt color of this individual, give the possible age group the individual belongs, reports the gender of this individual, the hair type, the race the hair length, the facial expression and so on.
-
-This app runs on android mobile and has an external wearable device.
