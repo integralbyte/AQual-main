@@ -670,11 +670,72 @@ function updateRootFilter(settings) {
 function buildPlaceholder(width, height, altText) {
   const safeWidth = Math.max(24, Math.round(width || 120));
   const safeHeight = Math.max(24, Math.round(height || 80));
-  const label = (altText && altText.trim() ? altText.trim() : "Image").slice(0, 80);
-  const fontSize = Math.max(12, Math.min(20, Math.round(safeWidth / 8)));
+  const label = altText && altText.trim() ? altText.trim() : "Image";
+
+  const escapeSvgText = (value) => String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+
+  const horizontalPadding = Math.max(12, Math.round(safeWidth * 0.05));
+  const verticalPadding = Math.max(12, Math.round(safeHeight * 0.06));
+  const maxTextWidth = Math.max(40, safeWidth - (horizontalPadding * 2));
+  const maxTextHeight = Math.max(24, safeHeight - (verticalPadding * 2));
+
+  const wrapWords = (text, maxCharsPerLine) => {
+    const words = String(text || "").split(/\s+/).filter(Boolean);
+    if (!words.length) return ["Image"];
+    const lines = [];
+    let current = "";
+    words.forEach((word) => {
+      if (!current) {
+        current = word;
+        return;
+      }
+      const candidate = `${current} ${word}`;
+      if (candidate.length <= maxCharsPerLine) {
+        current = candidate;
+      } else {
+        lines.push(current);
+        current = word;
+      }
+    });
+    if (current) lines.push(current);
+    return lines;
+  };
+
+  const lineHeightRatio = 1.32;
+  let fontSize = Math.max(11, Math.min(26, Math.round(Math.min(safeWidth / 15, safeHeight / 6))));
+  let lines = [label];
+  let lineHeight = Math.max(14, Math.round(fontSize * lineHeightRatio));
+  let textHeight = lineHeight;
+
+  while (fontSize > 10) {
+    const avgCharWidth = fontSize * 0.56;
+    const maxCharsPerLine = Math.max(8, Math.floor(maxTextWidth / avgCharWidth));
+    lines = wrapWords(label, maxCharsPerLine);
+    lineHeight = Math.max(14, Math.round(fontSize * lineHeightRatio));
+    textHeight = lines.length * lineHeight;
+    if (textHeight <= maxTextHeight) break;
+    fontSize -= 1;
+  }
+
+  if (textHeight > maxTextHeight) {
+    const maxVisibleLines = Math.max(1, Math.floor(maxTextHeight / lineHeight));
+    lines = lines.slice(0, maxVisibleLines);
+    const lastIndex = lines.length - 1;
+    if (lastIndex >= 0) {
+      lines[lastIndex] = `${lines[lastIndex].replace(/[ .]+$/, "")}...`;
+    }
+  }
+
+  const firstLineY = Math.round((safeHeight - ((lines.length - 1) * lineHeight)) / 2);
+  const tspans = lines
+    .map((line, index) => `<tspan x='50%' y='${firstLineY + (index * lineHeight)}'>${escapeSvgText(line)}</tspan>`)
+    .join("");
   const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='${safeWidth}' height='${safeHeight}'>` +
-    `<rect width='100%' height='100%' fill='%23f1f5f9'/>` +
-    `<text x='50%' y='50%' text-anchor='middle' dominant-baseline='middle' font-size='${fontSize}' font-family='sans-serif' fill='%2364748b'>${label.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</text>` +
+    `<rect width='100%' height='100%' fill='#f1f5f9'/>` +
+    `<text text-anchor='middle' font-size='${fontSize}' font-family='sans-serif' fill='#334155'>${tspans}</text>` +
     `</svg>`;
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
@@ -3076,6 +3137,11 @@ const pressedKeys = new Set();
 let audioHoldPingTimer = null;
 let audioHoldSequence = 0;
 let activeAudioHoldId = 0;
+let delayedVoiceStartTimer = null;
+let delayedVoiceStopTimer = null;
+let delayedVoiceHoldId = 0;
+let delayedVoicePending = false;
+let delayedVoiceActive = false;
 
 function isEditableTarget(target) {
   if (!target) return false;
@@ -3190,6 +3256,57 @@ function stopAudioHotkeySession() {
   activeAudioHoldId = 0;
 }
 
+function clearDelayedVoiceShortcut(stopActive) {
+  if (delayedVoiceStartTimer) {
+    clearTimeout(delayedVoiceStartTimer);
+    delayedVoiceStartTimer = null;
+  }
+  if (delayedVoiceStopTimer) {
+    clearTimeout(delayedVoiceStopTimer);
+    delayedVoiceStopTimer = null;
+  }
+  if (stopActive && delayedVoiceActive && delayedVoiceHoldId) {
+    safeRuntimeMessage({ type: "aqual-audio-hold", action: "stop", holdId: delayedVoiceHoldId });
+  }
+  delayedVoicePending = false;
+  delayedVoiceActive = false;
+  delayedVoiceHoldId = 0;
+}
+
+function scheduleDelayedVoiceShortcut() {
+  clearDelayedVoiceShortcut(true);
+  if (audioHotkeyActive) {
+    stopAudioHotkeySession();
+  }
+
+  audioHoldSequence += 1;
+  const holdId = audioHoldSequence;
+  delayedVoiceHoldId = holdId;
+  delayedVoicePending = true;
+
+  showGeminiLivePanel("Voice commands", "Alt+L queued. Listening starts in 10 seconds.", { sticky: false });
+
+  delayedVoiceStartTimer = setTimeout(() => {
+    delayedVoiceStartTimer = null;
+    if (!delayedVoicePending || delayedVoiceHoldId !== holdId) return;
+
+    delayedVoicePending = false;
+    delayedVoiceActive = true;
+    safeRuntimeMessage({ type: "aqual-audio-hold", action: "start", holdId });
+    showGeminiLivePanel("Voice commands", "Listening for 5 seconds...", { sticky: false });
+
+    delayedVoiceStopTimer = setTimeout(() => {
+      delayedVoiceStopTimer = null;
+      if (!delayedVoiceActive || delayedVoiceHoldId !== holdId) return;
+
+      delayedVoiceActive = false;
+      safeRuntimeMessage({ type: "aqual-audio-hold", action: "stop", holdId });
+      delayedVoiceHoldId = 0;
+      showGeminiLivePanel("Voice commands", "Stopped listening.", { sticky: false });
+    }, 5000);
+  }, 10000);
+}
+
 document.addEventListener("keydown", (event) => {
   pressedKeys.add(event.code);
   const isAltDown = pressedKeys.has("AltLeft") || pressedKeys.has("AltRight") || event.altKey;
@@ -3197,6 +3314,7 @@ document.addEventListener("keydown", (event) => {
   const isBDown = pressedKeys.has("KeyB") || event.code === "KeyB" || (event.key && event.key.toLowerCase() === "b");
   const isADown = pressedKeys.has("KeyA") || event.code === "KeyA" || (event.key && event.key.toLowerCase() === "a");
   const isDDown = pressedKeys.has("KeyD") || event.code === "KeyD" || (event.key && event.key.toLowerCase() === "d");
+  const isLDown = pressedKeys.has("KeyL") || event.code === "KeyL" || (event.key && event.key.toLowerCase() === "l");
   if (event.ctrlKey || event.metaKey) return;
 
   if (!event.repeat && isAltDown && isCDown) {
@@ -3216,14 +3334,22 @@ document.addEventListener("keydown", (event) => {
 
   if (!event.repeat && isAltDown && isDDown) {
     event.preventDefault();
+    clearDelayedVoiceShortcut(true);
     stopAudioHotkeySession();
     safeRuntimeMessage({ type: "aqual-gemini-live-toggle" });
     showGeminiLivePanel("Gemini Live", "Toggling live call...", { sticky: false });
     return;
   }
 
+  if (!event.repeat && isAltDown && isLDown) {
+    event.preventDefault();
+    scheduleDelayedVoiceShortcut();
+    return;
+  }
+
   if (audioHotkeyActive || event.repeat) return;
   if (!(isAltDown && isADown)) return;
+  clearDelayedVoiceShortcut(true);
   audioHotkeyActive = true;
   audioHoldSequence += 1;
   activeAudioHoldId = audioHoldSequence;
@@ -3246,6 +3372,7 @@ document.addEventListener("keyup", (event) => {
 
 window.addEventListener("blur", () => {
   stopAudioHotkeySession();
+  clearDelayedVoiceShortcut(true);
   stopSelectionSpeechPlayback();
   if (lineGuideOverlay) {
     lineGuideOverlay.style.opacity = "0";
