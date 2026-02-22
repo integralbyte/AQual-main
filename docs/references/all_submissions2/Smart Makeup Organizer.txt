@@ -1,7 +1,0 @@
-Inspiration
-
-The inspiration for this project came from watching many youtube video tutorials and watching the struggle that MUAs with disabilities had with opening their products. We were also inspired by the Sonicare toothbrush and its accompanying app.
-
-Description
-
-The Smart Makeup Organizer (SMO) is a component-based makeup organizer that simplifies skincare and makeup routines for those with physical disabilities or impairments. The SMO comes with several compartments, for brushes, palettes, and any other products related to skincare and makeup that the customer needs. It requires an outlet and will have an app that the user can use to control their “routines”. The user can scan the barcodes of each product in their possession or manually enter its name. Once the user has established their “routines” they simply need to press start. The SMO will then elevate or open the correct compartment and when the current product is replaced in the SMO, this will trigger the next step of the routine. What makes the SMO different from other makeup organizers is that it is self-sizing and self-stabilizing. This means that the user would place the products for their “routine” into the correct compartments, the SMO would then adjust to having a firm hold on each of the products. For someone with cerebral palsy, this means an easy way to open twist-off lids as the SMO would stabilize the product while the user removed the lid. The SMO would also provide sensors that work with a voice guidance system to aid the blind or visually impaired.

@@ -1,5 +1,0 @@
-People with Visual disabilities have difficulty using the products due to visual, cognitive, or mortar challenges. Nearly 40 million people worldwide suffer from partial or complete blindness. Our Smart Mirror with Makeup Assisting solution would use the power of AR, AI, and ML to enable people with disabilities to have the same access to cosmetics as everyone else. The application would be web-based and could be used on devices with internet access.
-
-The application would act as a companion throughout their makeup routine. People with visual impairments would be guided through the makeup process via voice communication. The application would aid people with hearing impairments by providing visual cues.
-
-When the smart mirror application is activated, the mobile device's camera detects the user's face, optimizes their appearance, and begins offering recommendations. It would look for cosmetics applications in visually impaired people and advise them to the proper orientation. It would also assist people in selecting the appropriate colour for the occasion and complementing the clothing they are wearing.
