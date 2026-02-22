@@ -33,6 +33,7 @@ PREFERRED_RING_NAME_TOKENS = ("yiser", "ring", "page", "turn")
 PREFERRED_RING_VID_PID = (0x05AC, 0x022C)
 YISER_J6_DEFAULT_BUTTON_INDEX = 1
 YISER_J6_DEFAULT_PRESS_VALUE = 3
+NON_RING_NAME_TOKENS = ("keyboard", "trackpad", "touchpad", "mouse", "apple internal")
 
 
 def _parse_int(raw, default=0):
@@ -54,10 +55,16 @@ def _hex4(value):
 
 
 def _device_label(info):
+    interface_number = info.get("interface_number")
+    interface_label = (
+        f", interface {int(interface_number)}"
+        if interface_number is not None
+        else ""
+    )
     return (
         f"{info.get('product_string') or 'Unknown'} "
         f"(VID {_hex4(info.get('vendor_id'))}, PID {_hex4(info.get('product_id'))}, "
-        f"usage_page {_hex4(info.get('usage_page'))}, usage {_hex4(info.get('usage'))})"
+        f"usage_page {_hex4(info.get('usage_page'))}, usage {_hex4(info.get('usage'))}{interface_label})"
     )
 
 
@@ -115,6 +122,45 @@ def _is_preferred_ring(info):
     return (vendor_id, product_id) == PREFERRED_RING_VID_PID
 
 
+def _is_obvious_non_ring(info):
+    name_blob = _device_name_blob(info)
+    if not name_blob:
+        return False
+    return any(token in name_blob for token in NON_RING_NAME_TOKENS)
+
+
+def _is_likely_ring(info):
+    vendor_id = int(info.get("vendor_id") or 0)
+    product_id = int(info.get("product_id") or 0)
+    usage_page = int(info.get("usage_page") or 0)
+    usage = int(info.get("usage") or 0)
+    name_blob = _device_name_blob(info)
+
+    if (vendor_id, product_id) == PREFERRED_RING_VID_PID:
+        return True
+    if PREFERRED_RING_NAME_EXACT in name_blob:
+        return True
+    if any(token in name_blob for token in PREFERRED_RING_NAME_TOKENS):
+        return True
+    if usage_page == 0x000D and usage == 0x0001 and vendor_id != 0 and product_id != 0:
+        return True
+    return False
+
+
+def _is_os_protected_hid_profile(info):
+    usage_page = int(info.get("usage_page") or 0)
+    usage = int(info.get("usage") or 0)
+    name_blob = _device_name_blob(info)
+    # On macOS, keyboard/consumer-control style interfaces are commonly protected.
+    if usage_page in (0x000C, 0x0001):
+        return True
+    if usage in (0x0001, 0x0006):
+        return True
+    if any(token in name_blob for token in ("keyboard", "consumer", "media")):
+        return True
+    return False
+
+
 def _matches_yiser_j6_frame_signature(report_norm):
     if len(report_norm) < 6:
         return False
@@ -136,6 +182,7 @@ def _enumerate_candidates(args):
         usage_page = int(item.get("usage_page") or 0)
         product_name = str(item.get("product_string") or "").lower()
         manufacturer = str(item.get("manufacturer_string") or "").lower()
+        name_blob = _device_name_blob(item)
 
         if args.vid is not None and vendor_id != args.vid:
             continue
@@ -148,32 +195,55 @@ def _enumerate_candidates(args):
             if needle not in product_name and needle not in manufacturer:
                 continue
 
-        # By default, prioritize digitizer/touch usage page (0x000D) from your logs.
+        # By default, prioritize digitizer/touch usage page (0x000D),
+        # but keep other interfaces for likely ring identities so we can
+        # fail over if one interface is blocked on macOS.
         if not args.all_usages and args.usage_page is None and usage_page != 0x000D:
-            continue
+            is_ring_identity = (
+                (vendor_id, product_id) == PREFERRED_RING_VID_PID
+                or PREFERRED_RING_NAME_EXACT in name_blob
+                or any(token in name_blob for token in PREFERRED_RING_NAME_TOKENS)
+            )
+            if not is_ring_identity:
+                continue
+
+        if not args.allow_non_ring:
+            if _is_obvious_non_ring(item):
+                continue
+            if not _is_likely_ring(item):
+                continue
 
         candidates.append(item)
     return candidates
 
 
 def _pick_device(args):
+    ranked = _rank_candidates(args)
+    if not ranked:
+        return None
+    return ranked[0]
+
+
+def _rank_candidates(args):
     candidates = _enumerate_candidates(args)
     if not candidates:
-        return None
+        return []
 
     if args.index >= 0:
         if args.index < len(candidates):
-            return candidates[args.index]
-        return candidates[0]
+            ranked = [candidates[args.index]]
+        else:
+            ranked = [candidates[0]]
+    else:
+        ranked = sorted(
+            candidates,
+            key=lambda item: (-_score_candidate(item), _stable_device_key(item)),
+        )
 
-    ranked = sorted(
-        candidates,
-        key=lambda item: (-_score_candidate(item), _stable_device_key(item)),
-    )
     if args.verbose:
         for i, item in enumerate(ranked[:8]):
             print(f"[ring-monitor] candidate[{i}] score={_score_candidate(item)} {_device_label(item)}")
-    return ranked[0]
+    return ranked
 
 
 def _push_ring_event(client, endpoint, device_info, report, verbose=False):
@@ -196,18 +266,76 @@ def _push_ring_event(client, endpoint, device_info, report, verbose=False):
         )
 
 
-def _monitor_device(args, device_info):
+def _open_hid_device(device_info):
     path = device_info.get("path")
     if not path:
         raise RuntimeError("Device has no HID path")
 
+    vendor_id = int(device_info.get("vendor_id") or 0)
+    product_id = int(device_info.get("product_id") or 0)
+    serial_number = str(device_info.get("serial_number") or "").strip() or None
+
+    open_errors = []
+    canonical_bytes_path = None
+    canonical_str_path = None
+    try:
+        if isinstance(path, str):
+            canonical_str_path = path
+            canonical_bytes_path = path.encode("utf-8")
+        elif isinstance(path, (bytes, bytearray, memoryview)):
+            canonical_bytes_path = bytes(path)
+            try:
+                canonical_str_path = canonical_bytes_path.decode("utf-8")
+            except Exception:
+                canonical_str_path = None
+        else:
+            canonical_str_path = str(path)
+            canonical_bytes_path = canonical_str_path.encode("utf-8")
+    except Exception:
+        canonical_str_path = str(path)
+        canonical_bytes_path = None
+
+    open_attempts = []
+    if canonical_bytes_path is not None:
+        open_attempts.append(("open_path(canonical_bytes_path)", canonical_bytes_path))
+    open_attempts.append(("open_path(raw_path)", path))
+
+    for label, candidate_path in open_attempts:
+        device = hid.device()
+        try:
+            device.open_path(candidate_path)
+            return device, label
+        except Exception as exc:
+            open_errors.append(f"{label}: {exc}")
+            try:
+                device.close()
+            except Exception:
+                pass
+
+    device = hid.device()
+    try:
+        if serial_number:
+            device.open(vendor_id, product_id, serial_number)
+            return device, "open(vendor_id, product_id, serial_number)"
+        device.open(vendor_id, product_id)
+        return device, "open(vendor_id, product_id)"
+    except Exception as exc:
+        open_errors.append(f"open(vendor_id, product_id[, serial_number]): {exc}")
+        try:
+            device.close()
+        except Exception:
+            pass
+
+    raise RuntimeError("open failed; attempts=" + " | ".join(open_errors))
+
+
+def _monitor_device(args, device_info):
     endpoint = f"{args.server_base.rstrip('/')}/ring-event/push"
     client = httpx.Client()
-    device = hid.device()
-    device.open_path(path)
+    device, open_method = _open_hid_device(device_info)
     device.set_nonblocking(True)
 
-    print(f"[ring-monitor] connected: {_device_label(device_info)}")
+    print(f"[ring-monitor] connected: {_device_label(device_info)} via {open_method}")
     use_strict_yiser_profile = _is_preferred_ring(device_info) and not args.disable_yiser_filter
     if use_strict_yiser_profile:
         print(
@@ -375,6 +503,11 @@ def _build_arg_parser():
     parser.add_argument("--all-usages", action="store_true", help="Do not restrict by usage page when auto-matching.")
     parser.add_argument("--name-contains", default="", help="Optional product/manufacturer substring.")
     parser.add_argument("--index", type=int, default=-1, help="Candidate index to use. -1 = auto-select best match.")
+    parser.add_argument(
+        "--allow-non-ring",
+        action="store_true",
+        help="Allow fallback to non-ring HID devices (disabled by default).",
+    )
     parser.add_argument("--poll-ms", type=int, default=15, help="Read polling interval in ms.")
     parser.add_argument("--debounce-ms", type=int, default=260, help="Debounce for press events.")
     parser.add_argument("--hold-ms", type=int, default=450, help="Hold threshold in ms for hold/tap logging.")
@@ -395,6 +528,12 @@ def _build_arg_parser():
         help="Strict filter press value for target byte (accepts decimal or hex, e.g. 3 or 0x03).",
     )
     parser.add_argument("--report-length", type=int, default=64, help="HID report read length.")
+    parser.add_argument(
+        "--open-retry-sec",
+        type=float,
+        default=2.0,
+        help="Cooldown (seconds) before retrying a candidate that failed to open.",
+    )
     parser.add_argument("--verbose", action="store_true", help="Verbose HID logging.")
     return parser
 
@@ -410,21 +549,75 @@ def main():
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
 
+    failed_open_until = {}
+
     print("[ring-monitor] starting. Press Ctrl+C to stop.")
     while not STOP:
-        device_info = _pick_device(args)
-        if not device_info:
+        ranked = _rank_candidates(args)
+        if not ranked:
             print("[ring-monitor] waiting for matching HID device...")
             time.sleep(1.0)
             continue
 
-        try:
-            _monitor_device(args, device_info)
-        except Exception as exc:
-            if STOP:
-                break
-            print(f"[ring-monitor] device loop error: {exc}", file=sys.stderr)
+        now = time.time()
+        expired_keys = [key for key, until in failed_open_until.items() if until <= now]
+        for key in expired_keys:
+            failed_open_until.pop(key, None)
+
+        attempted_any = False
+        opened_any = False
+        for device_info in ranked:
+            device_key = _stable_device_key(device_info)
+            blocked_until = failed_open_until.get(device_key, 0.0)
+            if blocked_until > now:
+                if args.verbose:
+                    remaining = max(0.0, blocked_until - now)
+                    print(
+                        f"[ring-monitor] skipping candidate (cooldown {remaining:.1f}s): "
+                        f"{_device_label(device_info)}"
+                    )
+                continue
+
+            attempted_any = True
+            try:
+                _monitor_device(args, device_info)
+                opened_any = True
+                failed_open_until.pop(device_key, None)
+                if STOP:
+                    break
+            except Exception as exc:
+                if STOP:
+                    break
+                message = str(exc)
+                print(f"[ring-monitor] device loop error: {message}", file=sys.stderr)
+                message_lower = message.lower()
+                if "open failed" in message_lower or "access denied" in message_lower or "permission" in message_lower:
+                    failed_open_until[device_key] = time.time() + max(0.5, float(args.open_retry_sec))
+                    if _is_os_protected_hid_profile(device_info):
+                        print(
+                            "[ring-monitor] hint: macOS is likely denying user-level access to this "
+                            "keyboard/consumer HID interface (not necessarily another app lock)."
+                        )
+                        print(
+                            "[ring-monitor] hint: run one quick elevated test to confirm:\n"
+                            "  sudo -E python3 servers/bionic/ring_monitor.py --server-base http://localhost:8080 --verbose --open-retry-sec 1"
+                        )
+                    else:
+                        print(
+                            "[ring-monitor] hint: another process may hold this HID interface "
+                            "(e.g. extension WebHID). Disconnect WebHID ring first."
+                        )
+                time.sleep(0.2)
+
+        if STOP:
+            break
+        if not attempted_any:
+            print("[ring-monitor] all matching candidates are cooling down after open failures...")
+            time.sleep(0.6)
+            continue
+        if not opened_any:
             time.sleep(1.0)
+            continue
 
     print("[ring-monitor] stopped.")
 
