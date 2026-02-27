@@ -24,12 +24,13 @@ const DEFAULTS = {
   colorBlindMode: "none",
   reducedCrowdingEnabled: false,
   drawingEnabled: false,
-  lineGuideEnabled: false
+  lineGuideEnabled: false,
+  readingModeEnabled: false
 };
 
 function getSettings(callback) {
   chrome.storage.sync.get(DEFAULTS, (stored) => {
-    callback({ ...DEFAULTS, ...(stored || {}) });
+    callback({ ...DEFAULTS, ...(stored || {}), readingModeEnabled: false });
   });
 }
 
@@ -169,6 +170,7 @@ const RING_FONT_COLOUR_STEPS = [
   "#BDC3C8"
 ];
 const RING_ACTION_TOGGLE_MAP = {
+  toggle_reading_mode: { key: "readingModeEnabled", label: "AI reading mode" },
   toggle_high_contrast: { key: "highContrastEnabled", label: "high contrast" },
   toggle_night_mode: { key: "nightModeEnabled", label: "night reading mode" },
   toggle_blue_light: { key: "blueLightEnabled", label: "blue-light filter" },
@@ -208,6 +210,7 @@ let ringHidEventsAttached = false;
 let ringHidLastToggleAt = 0;
 let backendRingLastToggleAtByAction = new Map();
 let backendRingPollingEnabled = true;
+let readingModeStateByTab = new Map();
 
 function localGet(defaults) {
   return new Promise((resolve) => {
@@ -358,6 +361,19 @@ function sendSettingsToRingTargetTab(settings, targetTabId = 0) {
   });
 }
 
+function withResolvedTargetTabId(preferredTabId, callback) {
+  if (Number.isFinite(preferredTabId) && preferredTabId > 0) {
+    callback(preferredTabId);
+    return;
+  }
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    const activeTab = tabs && tabs.length ? tabs[0] : null;
+    if (activeTab && typeof activeTab.id === "number") {
+      callback(activeTab.id);
+    }
+  });
+}
+
 function setRingStatus(statusText) {
   localSet({
     aqualRingHidStatus: statusText,
@@ -368,6 +384,19 @@ function setRingStatus(statusText) {
 function toggleAccessibilitySettingFromRing(settingKey, featureLabel, source = "ring-backend-monitor", buttonLabel = "", targetTabId = 0) {
   const sourceLabel = String(source || "ring");
   const buttonPrefix = ringButtonPrefix(buttonLabel);
+  if (settingKey === "readingModeEnabled") {
+    getSettings((settings) => {
+      withResolvedTargetTabId(targetTabId, (resolvedTabId) => {
+        const previous = Boolean(readingModeStateByTab.get(resolvedTabId));
+        const nextEnabled = !previous;
+        readingModeStateByTab.set(resolvedTabId, nextEnabled);
+        const nextSettings = { ...settings, readingModeEnabled: nextEnabled };
+        sendToTab(resolvedTabId, nextSettings);
+        setRingStatus(`Ring ${buttonPrefix}${featureLabel} ${nextEnabled ? "ON" : "OFF"} (${sourceLabel}).`);
+      });
+    });
+    return;
+  }
   getSettings((settings) => {
     const nextEnabled = !Boolean(settings[settingKey]);
     settings[settingKey] = nextEnabled;
@@ -2232,12 +2261,13 @@ const FUZZY_FEATURE_DEFINITIONS = [
   { key: "imageVeilEnabled", phrases: ["image veil", "hide images", "replace images", "veil images"] },
   { key: "highlightEnabled", phrases: ["highlight words", "word highlight", "highlight text", "bionic reading"] },
   { key: "lineGuideEnabled", phrases: ["beeline", "line guide", "line guidance", "reading line", "focus line", "tracking line"] },
+  { key: "readingModeEnabled", phrases: ["reading mode", "ai reading mode", "article mode", "reader mode", "focus reading mode"] },
   { key: "drawingEnabled", phrases: ["drawing mode", "draw on page", "annotation mode", "draw mode"] },
   { key: "magnifierEnabled", phrases: ["magnifier", "zoom lens", "image magnifier", "magnification"] },
   { key: "linkEmphasisEnabled", phrases: ["link emphasis", "emphasize links", "emphasise links", "underline links"] },
   { key: "cursorEnabled", phrases: ["cursor", "pointer", "mouse pointer", "mouse cursor"] },
   { key: "highContrastEnabled", phrases: ["high contrast mode", "high contrast", "contrast mode", "high con", "high con trust", "con trust mode", "contrast"] },
-  { key: "nightModeEnabled", phrases: ["night mode", "reading mode", "low vision mode", "dark reading mode"] },
+  { key: "nightModeEnabled", phrases: ["night mode", "low vision mode", "dark reading mode"] },
   { key: "dimmingEnabled", phrases: ["dimming", "brightness dimming", "reduce glare", "dim screen"] },
   { key: "blueLightEnabled", phrases: ["blue light filter", "blue light", "warm filter", "night shift"] },
   { key: "colorBlindMode", phrases: ["color vision", "colour vision", "color blind mode", "colour blind mode", "protanopia", "deuteranopia", "tritanopia"] }
@@ -2971,8 +3001,13 @@ function mentionHighContrast(text) {
   return includesAny(text, ["high contrast", "contrast mode"]);
 }
 
+function mentionReadingMode(text) {
+  return includesAny(text, ["reading mode", "ai reading mode", "article mode", "reader mode", "focus reading mode"])
+    && !includesAny(text, ["night mode", "dark reading", "low vision mode"]);
+}
+
 function mentionNightMode(text) {
-  return includesAny(text, ["night mode", "reading mode", "low vision mode", "dark reading"]);
+  return includesAny(text, ["night mode", "low vision mode", "dark reading"]);
 }
 
 function mentionDimming(text) {
@@ -3307,6 +3342,17 @@ function parseVisualVoiceCommand(normalizedText, settings) {
     }
   }
 
+  if (mentionReadingMode(normalizedText)) {
+    if (resetIntent) {
+      result.updates.readingModeEnabled = DEFAULTS.readingModeEnabled;
+      result.handled = true;
+      return result;
+    }
+    if (setBooleanUpdate(result, settings, "readingModeEnabled", switchIntent, false, DEFAULTS.readingModeEnabled)) {
+      return result;
+    }
+  }
+
   if (mentionNightMode(normalizedText)) {
     if (resetIntent) {
       result.updates.nightModeEnabled = DEFAULTS.nightModeEnabled;
@@ -3376,7 +3422,13 @@ function parseVisualVoiceCommand(normalizedText, settings) {
 
 function applyVisualVoiceResult(result, settings) {
   const updates = result.updates || {};
+  const persistedUpdates = { ...updates };
+  const hasReadingModeUpdate = Object.prototype.hasOwnProperty.call(persistedUpdates, "readingModeEnabled");
+  if (hasReadingModeUpdate) {
+    delete persistedUpdates.readingModeEnabled;
+  }
   const hasUpdates = Object.keys(updates).length > 0;
+  const hasPersistedUpdates = Object.keys(persistedUpdates).length > 0;
 
   const performTabActions = (tabId) => {
     if (result.actions.clearDrawings) {
@@ -3399,7 +3451,11 @@ function applyVisualVoiceResult(result, settings) {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       const activeTab = tabs && tabs.length ? tabs[0] : null;
       if (activeTab && hasUpdates) {
-        const nextSettings = { ...settings, ...updates };
+        const nextSettings = { ...settings, ...persistedUpdates };
+        if (hasReadingModeUpdate) {
+          nextSettings.readingModeEnabled = Boolean(updates.readingModeEnabled);
+          readingModeStateByTab.set(activeTab.id, Boolean(updates.readingModeEnabled));
+        }
         sendToTab(activeTab.id, nextSettings);
       }
       if (activeTab) {
@@ -3411,8 +3467,8 @@ function applyVisualVoiceResult(result, settings) {
     });
   };
 
-  if (hasUpdates) {
-    chrome.storage.sync.set(updates, execute);
+  if (hasPersistedUpdates) {
+    chrome.storage.sync.set(persistedUpdates, execute);
   } else {
     execute();
   }
@@ -3434,9 +3490,16 @@ function maybeHandleVisualVoiceCommand(text) {
   }
 
   getSettings((settings) => {
-    const command = parseVisualVoiceCommand(normalized, settings);
-    if (!command.handled) return;
-    applyVisualVoiceResult(command, settings);
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const activeTab = tabs && tabs.length ? tabs[0] : null;
+      const tabId = activeTab && typeof activeTab.id === "number" ? activeTab.id : 0;
+      if (tabId > 0) {
+        settings.readingModeEnabled = Boolean(readingModeStateByTab.get(tabId));
+      }
+      const command = parseVisualVoiceCommand(normalized, settings);
+      if (!command.handled) return;
+      applyVisualVoiceResult(command, settings);
+    });
   });
   return true;
 }
@@ -5242,6 +5305,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 });
 
 chrome.runtime.onInstalled.addListener((details) => {
+  chrome.storage.sync.set({ readingModeEnabled: false });
   if (details.reason === "install") {
     chrome.storage.sync.set({ ...DEFAULTS });
     chrome.storage.local.set({
@@ -5254,6 +5318,7 @@ chrome.runtime.onInstalled.addListener((details) => {
 });
 
 chrome.runtime.onStartup.addListener(() => {
+  chrome.storage.sync.set({ readingModeEnabled: false });
   chrome.storage.local.set({ aqualRingBackendPollingEnabled: true });
   initializeRingHid().catch((error) => {
     console.warn("[aqual-ring-hid]", JSON.stringify({
@@ -5268,7 +5333,11 @@ chrome.tabs.onActivated.addListener((activeInfo) => {
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status === "loading" || typeof changeInfo.url === "string") {
+    readingModeStateByTab.delete(tabId);
+  }
   if (changeInfo.status === "complete") {
+    readingModeStateByTab.delete(tabId);
     applySettingsToTab(tabId);
     if (pendingLearnIntent && isLearnTabUrl((tab && tab.url) || "")) {
       const queued = pendingLearnIntent;
@@ -5278,6 +5347,10 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
       }, 1100);
     }
   }
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  readingModeStateByTab.delete(tabId);
 });
 
 chrome.commands.onCommand.addListener((command) => {
@@ -5321,6 +5394,14 @@ chrome.commands.onCommand.addListener((command) => {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message) return;
+  if (message.type === "aqual-reading-mode-state-update") {
+    const tabId = sender && sender.tab && typeof sender.tab.id === "number" ? sender.tab.id : 0;
+    if (tabId > 0) {
+      readingModeStateByTab.set(tabId, Boolean(message.enabled));
+    }
+    sendResponse({ ok: true });
+    return false;
+  }
   if (message.type === "aqual-ring-hid-connect") {
     connectRingHidDevice(message.device)
       .then((result) => sendResponse(result))

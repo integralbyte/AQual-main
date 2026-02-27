@@ -24,7 +24,8 @@ const DEFAULTS = {
   colorBlindMode: "none",
   reducedCrowdingEnabled: false,
   drawingEnabled: false,
-  lineGuideEnabled: false
+  lineGuideEnabled: false,
+  readingModeEnabled: false
 };
 
 const COLOR_PALETTE = [
@@ -88,6 +89,7 @@ const RING_BUTTON_ACTION_DEFAULTS = {
 const RING_ACTION_OPTIONS = [
   { value: "toggle_voice_mic", label: "Toggle: Voice Commands mic" },
   { value: "toggle_gemini_live", label: "Toggle: Gemini Live call" },
+  { value: "toggle_reading_mode", label: "Toggle: AI reading mode" },
   { value: "toggle_high_contrast", label: "Toggle: High contrast" },
   { value: "toggle_night_mode", label: "Toggle: Night reading mode" },
   { value: "toggle_blue_light", label: "Toggle: Blue-light filter" },
@@ -141,6 +143,7 @@ const FEATURE_ICON_BY_PRIMARY_ID = {
   reducedCrowdingEnabled: "spacing",
   linkEmphasisEnabled: "link",
   cursorTypeSelect: "pointer",
+  readingModeEnabled: "spark",
   docUploadInput: "document",
   imageVeilEnabled: "image",
   highlightEnabled: "highlight",
@@ -190,6 +193,8 @@ const FEATURE_ICON_SVG = {
 
 let state = { ...DEFAULTS };
 let ringButtonActions = { ...RING_BUTTON_ACTION_DEFAULTS };
+let readingModeStatus = { status: "", detail: "", pageUrl: "" };
+let readingModeUnavailableTimer = null;
 let scrollPersistTimer = null;
 let activeTab = "visual";
 let visualSearchActive = false;
@@ -411,6 +416,66 @@ function setToggleText(id, enabled) {
   }
 }
 
+function applyReadingModeStateText() {
+  const el = byId("readingModeEnabledState");
+  if (!el) return;
+  if (!state.readingModeEnabled) {
+    el.textContent = "Off";
+    return;
+  }
+  const statusToken = String(readingModeStatus && readingModeStatus.status ? readingModeStatus.status : "").toLowerCase();
+  if (statusToken === "loading") {
+    el.textContent = "Loading...";
+    return;
+  }
+  if (statusToken === "error") {
+    el.textContent = "Error";
+    return;
+  }
+  if (statusToken === "disabled") {
+    el.textContent = "Off";
+    return;
+  }
+  el.textContent = "On";
+}
+
+function clearReadingModeUnavailableTimer() {
+  if (readingModeUnavailableTimer) {
+    clearTimeout(readingModeUnavailableTimer);
+    readingModeUnavailableTimer = null;
+  }
+}
+
+function scheduleReadingModeUnavailableFallback(referenceTs) {
+  clearReadingModeUnavailableTimer();
+  const baselineTs = Number(referenceTs || Date.now());
+  readingModeUnavailableTimer = setTimeout(() => {
+    readingModeUnavailableTimer = null;
+    if (!state.readingModeEnabled) return;
+    const latestTs = Number(readingModeStatus && readingModeStatus.updatedAt ? readingModeStatus.updatedAt : 0);
+    const statusToken = String(readingModeStatus && readingModeStatus.status ? readingModeStatus.status : "").toLowerCase();
+    if (latestTs > baselineTs) return;
+    if (statusToken === "applied" || statusToken === "disabled") return;
+    setReadingModeStatusLocal("error", "Reading mode is unavailable on this page.");
+  }, 20000);
+}
+
+function setReadingModeStatusLocal(status, detail = "") {
+  const payload = {
+    status: String(status || ""),
+    detail: String(detail || ""),
+    pageUrl: "",
+    updatedAt: Date.now()
+  };
+  chrome.storage.local.set({ aqualReadingModeStatus: payload });
+  readingModeStatus = payload;
+  const token = String(payload.status || "").toLowerCase();
+  if (token === "applied" || token === "error" || token === "disabled") {
+    clearReadingModeUnavailableTimer();
+  }
+  applyReadingModeStateText();
+}
+
 function renderPalette(containerId, name, selected) {
   const container = byId(containerId);
   if (!container) return;
@@ -461,9 +526,37 @@ function persistSettings(partial) {
 function pushStateToActive() {
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     if (!tabs || !tabs.length) return;
+    const sentAt = Date.now();
     chrome.tabs.sendMessage(tabs[0].id, {
       type: "aqual-apply",
       settings: state
+    }, () => {
+      if (!chrome.runtime.lastError) return;
+      if (!state.readingModeEnabled) return;
+      setReadingModeStatusLocal("loading", "Analysing page with Gemini Flash...");
+      scheduleReadingModeUnavailableFallback(sentAt);
+    });
+  });
+}
+
+function refreshReadingModeStateFromActiveTab() {
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    if (!tabs || !tabs.length || typeof tabs[0].id !== "number") {
+      state.readingModeEnabled = false;
+      const input = byId("readingModeEnabled");
+      if (input) input.checked = false;
+      applyReadingModeStateText();
+      return;
+    }
+    chrome.tabs.sendMessage(tabs[0].id, { type: "aqual-reading-mode-state" }, (response) => {
+      if (chrome.runtime.lastError) {
+        state.readingModeEnabled = false;
+      } else {
+        state.readingModeEnabled = Boolean(response && response.enabled);
+      }
+      const input = byId("readingModeEnabled");
+      if (input) input.checked = state.readingModeEnabled;
+      applyReadingModeStateText();
     });
   });
 }
@@ -1328,6 +1421,17 @@ function bindEvents() {
     pushStateToActive();
   });
 
+  byId("readingModeEnabled").addEventListener("change", (e) => {
+    state.readingModeEnabled = e.target.checked;
+    if (state.readingModeEnabled) {
+      setReadingModeStatusLocal("loading", "Analysing page with Gemini Flash...");
+    } else {
+      clearReadingModeUnavailableTimer();
+      setReadingModeStatusLocal("disabled", "Reading mode is off.");
+    }
+    pushStateToActive();
+  });
+
   byId("reducedCrowdingEnabled").addEventListener("change", (e) => {
     state.reducedCrowdingEnabled = e.target.checked;
     setToggleText("reducedCrowdingEnabledState", state.reducedCrowdingEnabled);
@@ -1448,7 +1552,7 @@ function bindEvents() {
 }
 
 function hydrateUI(settings) {
-  state = { ...DEFAULTS, ...settings };
+  state = { ...DEFAULTS, ...settings, readingModeEnabled: false };
 
   renderSelectOptions("fontFamilySelect", FONT_CHOICES, state.fontFamily);
   renderSelectOptions("cursorTypeSelect", CURSOR_CHOICES, state.cursorType);
@@ -1466,6 +1570,7 @@ function hydrateUI(settings) {
   byId("highlightEnabled").checked = state.highlightEnabled;
   byId("linkEmphasisEnabled").checked = state.linkEmphasisEnabled;
   byId("cursorEnabled").checked = state.cursorEnabled;
+  byId("readingModeEnabled").checked = false;
   byId("reducedCrowdingEnabled").checked = state.reducedCrowdingEnabled;
   byId("drawingEnabled").checked = state.drawingEnabled;
   byId("lineGuideEnabled").checked = state.lineGuideEnabled;
@@ -1495,6 +1600,7 @@ function hydrateUI(settings) {
   setToggleText("highlightEnabledState", state.highlightEnabled);
   setToggleText("linkEmphasisEnabledState", state.linkEmphasisEnabled);
   setToggleText("cursorEnabledState", state.cursorEnabled);
+  applyReadingModeStateText();
   setToggleText("reducedCrowdingEnabledState", state.reducedCrowdingEnabled);
   setToggleText("drawingEnabledState", state.drawingEnabled);
   setToggleText("lineGuideEnabledState", state.lineGuideEnabled);
@@ -1678,6 +1784,7 @@ document.addEventListener("DOMContentLoaded", () => {
     refreshRingHidState();
     popupInitUiReady = true;
     tryCompletePopupInit();
+    refreshReadingModeStateFromActiveTab();
   });
 
   chrome.storage.local.get({ aqualAudioMode: null }, (localStored) => {
@@ -1695,6 +1802,13 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  chrome.storage.local.get({ aqualReadingModeStatus: null }, (stored) => {
+    readingModeStatus = stored && stored.aqualReadingModeStatus && typeof stored.aqualReadingModeStatus === "object"
+      ? stored.aqualReadingModeStatus
+      : { status: "", detail: "", pageUrl: "" };
+    applyReadingModeStateText();
+  });
+
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === "local") {
       if (changes.aqualAudioRecording) {
@@ -1705,6 +1819,16 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       if (changes.aqualRingHidEnabled || changes.aqualRingHidDevice || changes.aqualRingHidStatus) {
         refreshRingHidState();
+      }
+      if (changes.aqualReadingModeStatus) {
+        readingModeStatus = changes.aqualReadingModeStatus.newValue && typeof changes.aqualReadingModeStatus.newValue === "object"
+          ? changes.aqualReadingModeStatus.newValue
+          : { status: "", detail: "", pageUrl: "" };
+        const statusToken = String(readingModeStatus && readingModeStatus.status ? readingModeStatus.status : "").toLowerCase();
+        if (statusToken === "applied" || statusToken === "error" || statusToken === "disabled") {
+          clearReadingModeUnavailableTimer();
+        }
+        applyReadingModeStateText();
       }
     }
     if (area === "sync" && changes.highContrastEnabled) {
