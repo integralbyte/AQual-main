@@ -1673,10 +1673,13 @@ function normalizeSearchValue(value) {
   return String(value || "").toLowerCase().replace(/\s+/g, " ").trim();
 }
 
-function getControlSearchText(control, sectionSummaryText) {
+function getControlSearchText(control) {
   if (!control) return "";
   if (!control.dataset.aqualSearchText) {
-    const rawText = `${sectionSummaryText} ${control.textContent || ""}`;
+    const titleText = control.querySelector(".control-title")?.textContent || "";
+    const subtitleText = control.querySelector(".control-subtitle")?.textContent || "";
+    const statusText = control.querySelector(".status-text")?.textContent || "";
+    const rawText = `${titleText} ${subtitleText} ${statusText}`.trim() || control.textContent || "";
     control.dataset.aqualSearchText = normalizeSearchValue(rawText);
   }
   return control.dataset.aqualSearchText;
@@ -1734,13 +1737,11 @@ function applyVisualSearchFilter(rawQuery) {
 
   let totalMatches = 0;
   sections.forEach((section) => {
-    const summaryEl = section.querySelector("summary");
-    const sectionSummaryText = normalizeSearchValue(summaryEl ? summaryEl.textContent : "");
     const controls = Array.from(section.querySelectorAll(":scope > .control"));
     let sectionMatchCount = 0;
 
     controls.forEach((control) => {
-      const text = getControlSearchText(control, sectionSummaryText);
+      const text = getControlSearchText(control);
       const isMatch = text.includes(query);
       control.style.display = isMatch ? "" : "none";
       if (isMatch) {
