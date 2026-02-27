@@ -24,7 +24,8 @@ const DEFAULTS = {
   colorBlindMode: "none",
   reducedCrowdingEnabled: false,
   drawingEnabled: false,
-  lineGuideEnabled: false
+  lineGuideEnabled: false,
+  readingModeEnabled: false
 };
 
 const FONT_CSS_MAP = {
@@ -204,6 +205,9 @@ let ringEventPollInFlight = false;
 let ringEventCursor = 0;
 let ringEventLastToggleAt = 0;
 let ringEventLastActionAt = Object.create(null);
+let readingModeRequestId = 0;
+let readingModeRequestInFlight = false;
+let readingModeAbortController = null;
 
 const HIGH_CONTRAST_CURSOR_MAP = {
   "arrow-large.png": "arrow-large-white.png",
@@ -219,6 +223,10 @@ const GOOGLE_MAPS_BLOCKLIST = [
 ];
 
 const DOC_SERVER_BASE = "http://localhost:8080";
+const READING_MODE_PLAN_ENDPOINT = `${DOC_SERVER_BASE}/reading-mode-plan`;
+const READING_MODE_REQUEST_TIMEOUT_MS = 18000;
+const READING_MODE_MAX_HTML_CHARS = 450000;
+const READING_MODE_DEBUG_LOGS = true;
 const RING_EVENT_POLL_ENDPOINT = `${DOC_SERVER_BASE}/ring-event/poll`;
 const RING_EVENT_POLL_INTERVAL_MS = 1400;
 const RING_EVENT_LOCAL_DEBOUNCE_MS = 260;
@@ -234,6 +242,7 @@ const RING_BUTTON_ACTION_DEFAULTS = {
 const VALID_RING_ACTIONS = new Set([
   "toggle_voice_mic",
   "toggle_gemini_live",
+  "toggle_reading_mode",
   "toggle_high_contrast",
   "toggle_night_mode",
   "toggle_blue_light",
@@ -322,6 +331,7 @@ function normalizeSettings(input) {
 }
 
 function resetAllVisualEffects() {
+  setReadingModeEnabled(false);
   applyFontFamily(false, state.fontFamily);
   applyFontSize(false, state.fontSizePx);
   applyFontColor(false, state.fontColor);
@@ -339,6 +349,450 @@ function resetAllVisualEffects() {
   applyDimming(false, state.dimmingLevel);
   applyBlueLight(false, state.blueLightLevel);
   setLineGuideEnabled(false);
+}
+
+function readingModeDebug(eventName, details) {
+  if (!READING_MODE_DEBUG_LOGS || window.top !== window) return;
+  const payload = {
+    event: String(eventName || ""),
+    href: window.location.href,
+    ...(details && typeof details === "object" ? details : {})
+  };
+  try {
+    console.info("[aqual-reading-mode]", JSON.stringify(payload));
+  } catch (_error) {
+    console.info("[aqual-reading-mode]", eventName, details || "");
+  }
+}
+
+function updateReadingModeStatus(status, detail = "", extra = null) {
+  const payload = {
+    status: String(status || ""),
+    detail: String(detail || ""),
+    pageUrl: window.location.href,
+    updatedAt: Date.now()
+  };
+  if (extra && typeof extra === "object") {
+    payload.extra = extra;
+  }
+  chrome.storage.local.set({ aqualReadingModeStatus: payload }, () => {
+    if (chrome.runtime.lastError) {
+      // Ignore storage write errors in page contexts where runtime may be transient.
+    }
+  });
+}
+
+function reportReadingModeState(enabled) {
+  chrome.runtime.sendMessage(
+    {
+      type: "aqual-reading-mode-state-update",
+      enabled: Boolean(enabled)
+    },
+    () => {
+      if (chrome.runtime.lastError) {
+        // Ignore if service worker is restarting.
+      }
+    },
+  );
+}
+
+function normalizeReadingModeSelectorList(rawValue, maxItems = 0) {
+  const values = Array.isArray(rawValue) ? rawValue : [];
+  const output = [];
+  const seen = new Set();
+  const cap = Number(maxItems);
+  const capEnabled = Number.isFinite(cap) && cap > 0;
+  for (let i = 0; i < values.length; i += 1) {
+    const selector = String(values[i] || "").trim();
+    if (!selector || selector.length > 220) continue;
+    const lowered = selector.toLowerCase();
+    if (lowered === "*" || lowered === "html" || lowered === "body" || lowered === ":root") continue;
+    if (lowered.includes("script") || lowered.includes("<") || lowered.includes(">")) continue;
+    if (seen.has(lowered)) continue;
+    seen.add(lowered);
+    output.push(selector);
+    if (capEnabled && output.length >= cap) break;
+  }
+  return output;
+}
+
+function readingModeQuerySelectorAll(selector) {
+  try {
+    return Array.from(document.querySelectorAll(selector));
+  } catch (_error) {
+    return [];
+  }
+}
+
+function readingModeElementDepth(element) {
+  let depth = 0;
+  let node = element;
+  while (node && node.parentElement) {
+    node = node.parentElement;
+    depth += 1;
+  }
+  return depth;
+}
+
+function readingModeIsAqualElement(element) {
+  if (!element || !element.getAttribute) return false;
+  const id = String(element.id || "");
+  if (id.startsWith("aqual-")) return true;
+  const className = String(element.className || "");
+  return className.includes("aqual-");
+}
+
+function readingModeBuildCandidateRoots(includeSelectors) {
+  const selectors = normalizeReadingModeSelectorList(includeSelectors, 12);
+  const fallbackSelectors = [
+    "main article",
+    "article",
+    "[role='main'] article",
+    "main",
+    "[role='main']",
+    "#content",
+    ".content",
+    ".article",
+    ".post",
+    ".story"
+  ];
+  const orderedSelectors = [...selectors, ...fallbackSelectors];
+  const scored = [];
+  const seen = new Set();
+
+  for (let i = 0; i < orderedSelectors.length; i += 1) {
+    const selector = orderedSelectors[i];
+    const nodes = readingModeQuerySelectorAll(selector);
+    for (let j = 0; j < nodes.length && j < 60; j += 1) {
+      const node = nodes[j];
+      if (!(node instanceof Element) || !document.body || !document.body.contains(node)) continue;
+      if (readingModeIsAqualElement(node)) continue;
+      const key = `${selector}::${readingModeElementDepth(node)}::${node.tagName}::${node.id || ""}::${node.className || ""}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      const textLength = String(node.innerText || "").replace(/\s+/g, " ").trim().length;
+      const idClassText = `${node.id || ""} ${node.className || ""}`.toLowerCase();
+      const semanticBonus = /^(ARTICLE|MAIN|SECTION)$/.test(node.tagName) ? 260 : 0;
+      const contentHintBonus = /(article|content|story|post|entry|main|body|text)/.test(idClassText) ? 180 : 0;
+      const score = textLength + semanticBonus + contentHintBonus;
+      if (textLength < 80 && i < selectors.length) {
+        continue;
+      }
+      scored.push({
+        element: node,
+        depth: readingModeElementDepth(node),
+        score,
+      });
+    }
+  }
+
+  scored.sort((a, b) => {
+    if (b.depth !== a.depth) return b.depth - a.depth;
+    return b.score - a.score;
+  });
+
+  const roots = [];
+  for (let i = 0; i < scored.length; i += 1) {
+    const candidate = scored[i].element;
+    if (roots.some((existing) => candidate === existing || candidate.contains(existing))) {
+      continue;
+    }
+    roots.push(candidate);
+    if (roots.length >= 6) break;
+  }
+
+  if (roots.length) return roots;
+
+  if (document.body) {
+    const fallbackRoot = document.querySelector("article")
+      || document.querySelector("main")
+      || document.querySelector("[role='main']")
+      || document.querySelector("#content")
+      || document.body;
+    if (fallbackRoot) return [fallbackRoot];
+  }
+
+  return [];
+}
+
+function readingModeElementInsideRoots(element, roots) {
+  for (let i = 0; i < roots.length; i += 1) {
+    const root = roots[i];
+    if (root === element || root.contains(element)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function readingModeTextLengthOfRoots(roots) {
+  return roots.reduce((sum, root) => {
+    const text = root && typeof root.innerText === "string"
+      ? root.innerText.replace(/\s+/g, " ").trim()
+      : "";
+    return sum + text.length;
+  }, 0);
+}
+
+function readingModeSelectorIsAggressiveExclude(selector) {
+  const token = String(selector || "").trim().toLowerCase();
+  if (!token) return true;
+  const broad = new Set([
+    "div", "section", "article", "main", "span", "p", "a",
+    "ul", "ol", "li", "table", "figure", "img", "video",
+    "h1", "h2", "h3", "h4", "h5", "h6", "*", "main *", "article *", "body *"
+  ]);
+  if (broad.has(token)) return true;
+  if (token.startsWith("*")) return true;
+  if (token.includes(":not(") || token.includes(":has(") || token.includes(":is(") || token.includes(":where(")) {
+    return true;
+  }
+  const hasStructure = /[#.\[\s>+~:]/.test(token);
+  const hasNoiseHint = /(ad|promo|related|recommend|tag|chip|newsletter|share|social|cookie|consent|sponsor|sidebar|rail|card)/.test(token);
+  return !hasStructure && !hasNoiseHint;
+}
+
+function clearReadingModeDom() {
+  document.documentElement.classList.remove("aqual-reading-mode-active");
+  const hiddenNodes = document.querySelectorAll("[data-aqual-reading-hidden='1']");
+  hiddenNodes.forEach((node) => {
+    node.removeAttribute("data-aqual-reading-hidden");
+  });
+}
+
+function applyReadingModePlan(plan) {
+  if (!document.body || !document.documentElement) {
+    return { ok: false, error: "Page body is unavailable." };
+  }
+
+  const includeSelectors = normalizeReadingModeSelectorList(
+    plan && (plan.includeSelectors || plan.include_selectors),
+    10,
+  );
+  const excludeSelectors = normalizeReadingModeSelectorList(
+    plan && (plan.excludeSelectors || plan.exclude_selectors),
+    0,
+  );
+  let roots = readingModeBuildCandidateRoots(includeSelectors);
+  const fallbackRoots = readingModeBuildCandidateRoots([]);
+  const rootsTextLength = readingModeTextLengthOfRoots(roots);
+  const fallbackTextLength = readingModeTextLengthOfRoots(fallbackRoots);
+  if (
+    fallbackRoots.length
+    && (rootsTextLength < 240 || (fallbackTextLength > 0 && rootsTextLength < fallbackTextLength * 0.35))
+  ) {
+    roots = fallbackRoots;
+  }
+  if (!roots.length) {
+    return { ok: false, error: "No readable content container was found." };
+  }
+
+  clearReadingModeDom();
+  const keepAncestors = new Set([document.documentElement, document.body]);
+  roots.forEach((root) => {
+    let cursor = root;
+    while (cursor && cursor instanceof Element) {
+      keepAncestors.add(cursor);
+      if (cursor === document.body || cursor === document.documentElement) break;
+      cursor = cursor.parentElement;
+    }
+  });
+
+  let hiddenCount = 0;
+  const allNodes = document.body.querySelectorAll("*");
+  allNodes.forEach((element) => {
+    if (!(element instanceof Element)) return;
+    if (readingModeIsAqualElement(element)) return;
+    if (keepAncestors.has(element)) return;
+    if (readingModeElementInsideRoots(element, roots)) return;
+    element.setAttribute("data-aqual-reading-hidden", "1");
+    hiddenCount += 1;
+  });
+
+  const rootTextBeforeExclude = Math.max(1, readingModeTextLengthOfRoots(roots));
+  excludeSelectors.forEach((selector) => {
+    if (readingModeSelectorIsAggressiveExclude(selector)) {
+      return;
+    }
+    const matches = readingModeQuerySelectorAll(selector);
+    if (matches.length > 180) {
+      return;
+    }
+    let selectorTextLength = 0;
+    const candidates = [];
+    matches.forEach((element) => {
+      if (!(element instanceof Element)) return;
+      if (readingModeIsAqualElement(element)) return;
+      if (!readingModeElementInsideRoots(element, roots)) return;
+      if (roots.some((root) => root === element || element.contains(root))) return;
+      const tag = String(element.tagName || "").toUpperCase();
+      const criticalTag = /^(ARTICLE|MAIN|SECTION|P|H1|H2|H3|H4|H5|H6|UL|OL|TABLE)$/.test(tag);
+      const noisySelector = /(ad|promo|related|recommend|tag|chip|newsletter|share|social|cookie|consent|sponsor|sidebar|rail|card)/.test(String(selector || "").toLowerCase());
+      if (criticalTag && !noisySelector) return;
+      const textLen = String(element.innerText || "").replace(/\s+/g, " ").trim().length;
+      selectorTextLength += textLen;
+      candidates.push(element);
+    });
+    if (selectorTextLength > rootTextBeforeExclude * 0.55) {
+      return;
+    }
+    candidates.forEach((element) => {
+      if (element.getAttribute("data-aqual-reading-hidden") !== "1") {
+        element.setAttribute("data-aqual-reading-hidden", "1");
+        hiddenCount += 1;
+      }
+    });
+  });
+
+  const rootTextAfterExclude = readingModeTextLengthOfRoots(roots);
+  if (rootTextAfterExclude < 180) {
+    clearReadingModeDom();
+    return { ok: false, error: "Reading mode filtered too aggressively on this page." };
+  }
+
+  document.documentElement.classList.add("aqual-reading-mode-active");
+  return { ok: true, rootCount: roots.length, hiddenCount };
+}
+
+function buildReadingModePayload() {
+  const root = document.documentElement;
+  const fullHtml = root && root.outerHTML ? String(root.outerHTML) : "";
+  const truncated = fullHtml.length > READING_MODE_MAX_HTML_CHARS;
+  const htmlSource = truncated ? fullHtml.slice(0, READING_MODE_MAX_HTML_CHARS) : fullHtml;
+  const visibleTextPreview = document.body
+    ? String(document.body.innerText || "").replace(/\s+/g, " ").trim().slice(0, 8000)
+    : "";
+  return {
+    pageUrl: window.location.href,
+    pageTitle: document.title || "",
+    htmlSource,
+    visibleTextPreview,
+    inputTruncatedClientSide: truncated,
+    htmlCharsOriginal: fullHtml.length,
+    htmlCharsSent: htmlSource.length,
+  };
+}
+
+async function fetchReadingModePlan() {
+  const payload = buildReadingModePayload();
+  if (!payload.htmlSource) {
+    throw new Error("Could not read page HTML.");
+  }
+  readingModeDebug("request_payload_ready", {
+    pageTitleChars: String(payload.pageTitle || "").length,
+    visibleTextChars: String(payload.visibleTextPreview || "").length,
+    htmlCharsOriginal: Number(payload.htmlCharsOriginal || 0),
+    htmlCharsSent: Number(payload.htmlCharsSent || 0),
+    truncatedClientSide: Boolean(payload.inputTruncatedClientSide),
+  });
+
+  const controller = new AbortController();
+  readingModeAbortController = controller;
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+  }, READING_MODE_REQUEST_TIMEOUT_MS);
+
+  try {
+    const startedAt = Date.now();
+    const response = await fetch(READING_MODE_PLAN_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      readingModeDebug("request_failed", {
+        status: response.status,
+        error: String(data && data.error ? data.error : ""),
+      });
+      throw new Error(String(data && data.error ? data.error : `Reading mode request failed (${response.status})`));
+    }
+    readingModeDebug("request_success", {
+      durationMs: Date.now() - startedAt,
+      includeCount: Array.isArray(data && data.includeSelectors) ? data.includeSelectors.length : 0,
+      excludeCount: Array.isArray(data && data.excludeSelectors) ? data.excludeSelectors.length : 0,
+      model: String(data && data.model ? data.model : ""),
+      inputTruncatedServerSide: Boolean(data && data.debug && data.debug.inputTruncated),
+    });
+    return data || {};
+  } finally {
+    if (readingModeAbortController === controller) {
+      readingModeAbortController = null;
+    }
+    clearTimeout(timeoutId);
+  }
+}
+
+async function setReadingModeEnabled(enabled) {
+  if (!enabled) {
+    readingModeRequestId += 1;
+    if (readingModeAbortController) {
+      try {
+        readingModeAbortController.abort();
+      } catch (_error) {
+        // Ignore abort errors.
+      }
+      readingModeAbortController = null;
+    }
+    readingModeRequestInFlight = false;
+    readingModeDebug("toggle_off");
+    clearReadingModeDom();
+    updateReadingModeStatus("disabled", "Reading mode is off.");
+    reportReadingModeState(false);
+    return;
+  }
+  if (window.top !== window) {
+    return;
+  }
+  if (readingModeRequestInFlight) {
+    readingModeDebug("toggle_on_ignored_inflight");
+    return;
+  }
+  const requestId = ++readingModeRequestId;
+  readingModeRequestInFlight = true;
+  readingModeDebug("toggle_on", { requestId });
+  updateReadingModeStatus("loading", "Analysing page with Gemini Flash...");
+
+  try {
+    const plan = await fetchReadingModePlan();
+    if (requestId !== readingModeRequestId) return;
+    const applied = applyReadingModePlan(plan);
+    if (!applied.ok) {
+      throw new Error(applied.error || "Could not apply reading mode.");
+    }
+    readingModeDebug("apply_success", {
+      requestId,
+      roots: Number(applied.rootCount || 0),
+      hidden: Number(applied.hiddenCount || 0),
+    });
+    updateReadingModeStatus(
+      "applied",
+      "Reading mode applied.",
+      {
+        rootCount: Number(applied.rootCount || 0),
+        hiddenCount: Number(applied.hiddenCount || 0),
+      },
+    );
+    reportReadingModeState(true);
+  } catch (error) {
+    if (requestId !== readingModeRequestId) return;
+    if (error && error.name === "AbortError") {
+      readingModeDebug("request_aborted", { requestId });
+      return;
+    }
+    clearReadingModeDom();
+    const message = error && error.message ? error.message : "Failed to apply reading mode.";
+    readingModeDebug("apply_error", { requestId, error: message });
+    updateReadingModeStatus("error", message);
+    reportReadingModeState(false);
+    showGeminiLivePanel("Reading mode error", message, { sticky: true, isError: true });
+  } finally {
+    if (requestId === readingModeRequestId) {
+      readingModeRequestInFlight = false;
+    }
+  }
 }
 
 function ensureStyleTag(id, cssText) {
@@ -1239,6 +1693,10 @@ function applySettings(incoming) {
     (next.cursorEnabled && next.highContrastEnabled !== state.highContrastEnabled)
   ) {
     applyCursor(next.cursorEnabled, next.cursorType, next.highContrastEnabled);
+  }
+
+  if (next.readingModeEnabled !== state.readingModeEnabled) {
+    setReadingModeEnabled(next.readingModeEnabled);
   }
 
   if (next.imageVeilEnabled !== state.imageVeilEnabled) {
@@ -2653,6 +3111,10 @@ function runRingKeyCommand(action) {
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (!message) return;
+  if (message.type === "aqual-reading-mode-state") {
+    sendResponse({ enabled: Boolean(state.readingModeEnabled) });
+    return false;
+  }
   if (message.type === "aqual-google-search-action") {
     if (window.top !== window) {
       return;
@@ -2736,7 +3198,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 });
 
 chrome.storage.sync.get({ ...DEFAULTS, aqualRingButtonActions: RING_BUTTON_ACTION_DEFAULTS }, (stored) => {
-  applySettings(stored || {});
+  const initialSettings = { ...(stored || {}), readingModeEnabled: false };
+  applySettings(initialSettings);
+  updateReadingModeStatus("disabled", "Reading mode is off.");
+  reportReadingModeState(false);
   ringButtonActionOverrides = normalizeRingButtonActions(stored ? stored.aqualRingButtonActions : null);
   chrome.storage.local.get(RING_EVENT_POLL_DEFAULTS, (localStored) => {
     if (!localStored || localStored.aqualRingBackendPollingEnabled !== false) {

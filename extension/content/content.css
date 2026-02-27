@@ -207,3 +207,7 @@ html.aqual-high-contrast body * {
 html.aqual-high-contrast body *:not(img):not(video):not(canvas):not(svg):not(path):not(g):not(use):not(.aqual-dim-overlay):not(.aqual-blue-overlay):not(.aqual-draw-canvas):not(.aqual-magnifier-lens):not(.aqual-line-guide-overlay) {
   background-color: #000000 !important;
 }
+
+html.aqual-reading-mode-active [data-aqual-reading-hidden="1"] {
+  display: none !important;
+}
