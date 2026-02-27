@@ -18,6 +18,7 @@ import hashlib
 import logging
 from threading import Lock
 from pathlib import Path
+from collections import deque
 import httpx
 from google import genai
 from google.genai import types
@@ -32,6 +33,7 @@ app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 app.logger.setLevel("INFO")
 SUPPRESS_RING_POLL_REQUEST_LOGS = str(get_env("SUPPRESS_RING_POLL_REQUEST_LOGS", "1")).strip().lower() not in ("0", "false", "no", "off")
+RING_POLL_DEBUG = str(get_env("RING_POLL_DEBUG", "0")).strip().lower() in ("1", "true", "yes", "on")
 
 
 class _SuppressRingPollAccessLogs(logging.Filter):
@@ -111,6 +113,7 @@ live_screenshot_store = {}
 ring_event_lock = Lock()
 ring_event_counter = 0
 ring_event_last_ts = 0.0
+ring_event_history = deque(maxlen=500)
 
 
 def _set_cors_headers(response):
@@ -147,10 +150,17 @@ def _log_ring_event(event: str, **fields):
 def _register_ring_event(source: str = "unknown", payload=None):
     global ring_event_counter, ring_event_last_ts
     now_ts = time.time()
+    payload_data = payload if isinstance(payload, dict) else {}
     with ring_event_lock:
         ring_event_counter += 1
         ring_event_last_ts = now_ts
         cursor = ring_event_counter
+        ring_event_history.append({
+            "cursor": int(cursor),
+            "timestamp": float(now_ts),
+            "source": str(source or "unknown"),
+            "payload": payload_data,
+        })
     _log_ring_event(
         "event_push",
         source=source,
@@ -1783,13 +1793,27 @@ def ring_event_poll():
     with ring_event_lock:
         server_cursor = int(ring_event_counter)
         last_ts = float(ring_event_last_ts)
+        events = [
+            event
+            for event in ring_event_history
+            if int(event.get("cursor", 0)) > client_cursor
+        ]
 
     delta = max(0, server_cursor - client_cursor)
+    if RING_POLL_DEBUG:
+        _log_ring_event(
+            "event_poll",
+            client_cursor=client_cursor,
+            server_cursor=server_cursor,
+            delta=delta,
+            events_count=len(events),
+        )
     return jsonify({
         "ok": True,
         "cursor": server_cursor,
         "delta": delta,
         "lastEventTs": last_ts,
+        "events": events,
     })
 
 
