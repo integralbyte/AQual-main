@@ -203,6 +203,7 @@ let ringEventPollTimer = null;
 let ringEventPollInFlight = false;
 let ringEventCursor = 0;
 let ringEventLastToggleAt = 0;
+let ringEventLastActionAt = Object.create(null);
 
 const HIGH_CONTRAST_CURSOR_MAP = {
   "arrow-large.png": "arrow-large-white.png",
@@ -221,11 +222,99 @@ const DOC_SERVER_BASE = "http://localhost:8080";
 const RING_EVENT_POLL_ENDPOINT = `${DOC_SERVER_BASE}/ring-event/poll`;
 const RING_EVENT_POLL_INTERVAL_MS = 1400;
 const RING_EVENT_LOCAL_DEBOUNCE_MS = 260;
-const RING_EVENT_POLL_DEFAULTS = { aqualRingHidEnabled: false };
+const RING_EVENT_POLL_DEFAULTS = { aqualRingBackendPollingEnabled: true };
+const RING_BUTTON_ACTION_DEFAULTS = {
+  right: "toggle_image_veil",
+  left: "toggle_line_guide",
+  bottom: "toggle_font_color",
+  top: "toggle_reduced_crowding",
+  center: "toggle_voice_mic",
+  home: "toggle_high_contrast"
+};
+const VALID_RING_ACTIONS = new Set([
+  "toggle_voice_mic",
+  "toggle_gemini_live",
+  "toggle_high_contrast",
+  "toggle_night_mode",
+  "toggle_blue_light",
+  "toggle_dimming",
+  "toggle_font_family",
+  "toggle_font_size",
+  "toggle_line_guide",
+  "toggle_image_veil",
+  "toggle_highlight",
+  "toggle_link_emphasis",
+  "toggle_cursor",
+  "toggle_text_stroke",
+  "toggle_drawing",
+  "toggle_magnifier",
+  "toggle_reduced_crowding",
+  "toggle_font_color",
+  "cycle_color_vision",
+  "cycle_font_family",
+  "cycle_cursor",
+  "cycle_font_size",
+  "cycle_magnifier_size",
+  "cycle_magnifier_zoom",
+  "cycle_dimming_level",
+  "cycle_blue_light_level",
+  "cycle_font_color",
+  "cycle_text_stroke_color",
+  "clear_drawings",
+  "print_page",
+  "capture_screenshot",
+  "key_arrow_up",
+  "key_arrow_down",
+  "key_arrow_left",
+  "key_arrow_right",
+  "key_space",
+  "key_enter",
+  "key_escape",
+  "key_tab",
+  "key_backspace",
+  "key_page_up",
+  "key_page_down",
+  "key_home",
+  "key_end",
+  "none"
+]);
+let ringButtonActionOverrides = { ...RING_BUTTON_ACTION_DEFAULTS };
 
 function isGoogleMapsUrl() {
   const href = window.location.href;
   return GOOGLE_MAPS_BLOCKLIST.some((prefix) => href.startsWith(prefix));
+}
+
+function normalizeRingAction(action) {
+  const token = String(action || "").trim().toLowerCase();
+  if (!VALID_RING_ACTIONS.has(token)) {
+    return "";
+  }
+  return token;
+}
+
+function normalizeRingButtonActions(raw) {
+  const source = raw && typeof raw === "object" ? raw : {};
+  const normalized = {};
+  for (const button of Object.keys(RING_BUTTON_ACTION_DEFAULTS)) {
+    const defaultAction = RING_BUTTON_ACTION_DEFAULTS[button];
+    const requested = normalizeRingAction(source[button]);
+    normalized[button] = requested || defaultAction;
+  }
+  return normalized;
+}
+
+function resolveRingActionForPayload(buttonLabel, fallbackAction) {
+  const fallback = normalizeRingAction(fallbackAction) || "toggle_voice_mic";
+  const button = String(buttonLabel || "").trim().toLowerCase();
+  if (!button) {
+    return fallback;
+  }
+  const configured = normalizeRingAction(ringButtonActionOverrides[button]);
+  if (!configured) {
+    return fallback;
+  }
+  return configured;
 }
 
 function normalizeSettings(input) {
@@ -648,15 +737,31 @@ function ensureColorFilters() {
   (document.body || document.documentElement).appendChild(svg);
 }
 
+function applyMediaColorBlindFilter(mode) {
+  const id = "aqual-media-colorblind-filter";
+  const normalizedMode = String(mode || "").trim().toLowerCase();
+  if (!normalizedMode || normalizedMode === "none") {
+    removeElement(id);
+    return;
+  }
+
+  ensureColorFilters();
+  const filterId = `aqual-cb-${normalizedMode}`;
+  const css = `
+img,
+video {
+  filter: url(#${filterId}) !important;
+}
+`;
+  ensureStyleTag(id, css);
+}
+
 function updateRootFilter(settings) {
   const parts = [];
   if (settings.highContrastEnabled) {
     parts.push("contrast(1.45) saturate(1.05)");
   }
-  if (settings.colorBlindMode && settings.colorBlindMode !== "none") {
-    ensureColorFilters();
-    parts.push(`url(#aqual-cb-${settings.colorBlindMode})`);
-  }
+  applyMediaColorBlindFilter(settings.colorBlindMode);
 
   if (parts.length > 0) {
     document.documentElement.classList.add("aqual-filter-root");
@@ -2435,6 +2540,117 @@ async function resolveLearnActionFromPayload(payload) {
   return { ok: false, error: `Unsupported Learn action "${action}".` };
 }
 
+function isEditableTarget(element) {
+  if (!element || !element.tagName) return false;
+  const tag = element.tagName.toLowerCase();
+  if (tag === "input" || tag === "textarea" || tag === "select") {
+    return !(element.disabled || element.readOnly);
+  }
+  if (element.isContentEditable) return true;
+  return false;
+}
+
+function getFocusableElements() {
+  return Array.from(document.querySelectorAll(
+    "a[href], button, input, select, textarea, [tabindex]:not([tabindex='-1'])"
+  )).filter((element) => {
+    if (!element || typeof element.focus !== "function") return false;
+    if (element.disabled) return false;
+    const style = window.getComputedStyle(element);
+    return style.display !== "none" && style.visibility !== "hidden";
+  });
+}
+
+function moveFocusByOffset(offset) {
+  const focusable = getFocusableElements();
+  if (!focusable.length) return;
+  const active = document.activeElement;
+  const currentIndex = focusable.indexOf(active);
+  const fallbackIndex = offset >= 0 ? 0 : focusable.length - 1;
+  const baseIndex = currentIndex >= 0 ? currentIndex : fallbackIndex - offset;
+  const nextIndex = Math.min(focusable.length - 1, Math.max(0, baseIndex + offset));
+  const target = focusable[nextIndex];
+  if (target && typeof target.focus === "function") {
+    target.focus({ preventScroll: false });
+  }
+}
+
+function dispatchSyntheticKeyEvent(target, type, key, code) {
+  if (!target || typeof target.dispatchEvent !== "function") return false;
+  const event = new KeyboardEvent(type, {
+    key,
+    code,
+    bubbles: true,
+    cancelable: true
+  });
+  return target.dispatchEvent(event);
+}
+
+function runRingKeyCommand(action) {
+  const command = String(action || "").trim().toLowerCase();
+  const active = document.activeElement || document.body;
+  const editable = isEditableTarget(active);
+  const map = {
+    key_arrow_up: { key: "ArrowUp", code: "ArrowUp" },
+    key_arrow_down: { key: "ArrowDown", code: "ArrowDown" },
+    key_arrow_left: { key: "ArrowLeft", code: "ArrowLeft" },
+    key_arrow_right: { key: "ArrowRight", code: "ArrowRight" },
+    key_space: { key: " ", code: "Space" },
+    key_enter: { key: "Enter", code: "Enter" },
+    key_escape: { key: "Escape", code: "Escape" },
+    key_tab: { key: "Tab", code: "Tab" },
+    key_backspace: { key: "Backspace", code: "Backspace" },
+    key_page_up: { key: "PageUp", code: "PageUp" },
+    key_page_down: { key: "PageDown", code: "PageDown" },
+    key_home: { key: "Home", code: "Home" },
+    key_end: { key: "End", code: "End" }
+  };
+  const descriptor = map[command];
+  if (!descriptor) {
+    return false;
+  }
+
+  dispatchSyntheticKeyEvent(active, "keydown", descriptor.key, descriptor.code);
+  dispatchSyntheticKeyEvent(active, "keyup", descriptor.key, descriptor.code);
+
+  if (editable && command !== "key_escape") {
+    return true;
+  }
+
+  if (command === "key_arrow_up") {
+    window.scrollBy({ top: -120, behavior: "smooth" });
+  } else if (command === "key_arrow_down") {
+    window.scrollBy({ top: 120, behavior: "smooth" });
+  } else if (command === "key_arrow_left") {
+    window.scrollBy({ left: -120, behavior: "smooth" });
+  } else if (command === "key_arrow_right") {
+    window.scrollBy({ left: 120, behavior: "smooth" });
+  } else if (command === "key_space" || command === "key_page_down") {
+    window.scrollBy({ top: Math.max(220, Math.round(window.innerHeight * 0.82)), behavior: "smooth" });
+  } else if (command === "key_page_up") {
+    window.scrollBy({ top: -Math.max(220, Math.round(window.innerHeight * 0.82)), behavior: "smooth" });
+  } else if (command === "key_home") {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  } else if (command === "key_end") {
+    const endTop = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+    window.scrollTo({ top: endTop, behavior: "smooth" });
+  } else if (command === "key_enter") {
+    if (active && typeof active.click === "function" && !isEditableTarget(active)) {
+      active.click();
+    }
+  } else if (command === "key_escape") {
+    if (active && typeof active.blur === "function") {
+      active.blur();
+    }
+  } else if (command === "key_tab") {
+    moveFocusByOffset(1);
+  } else if (command === "key_backspace") {
+    window.history.back();
+  }
+
+  return true;
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (!message) return;
   if (message.type === "aqual-google-search-action") {
@@ -2508,12 +2724,22 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === "aqual-clear-drawings") {
     clearDrawings();
   }
+  if (message.type === "aqual-ring-key-command") {
+    if (window.top !== window) {
+      sendResponse({ ok: true, ignored: true });
+      return false;
+    }
+    runRingKeyCommand(message.action || "");
+    sendResponse({ ok: true });
+    return false;
+  }
 });
 
-chrome.storage.sync.get(DEFAULTS, (stored) => {
+chrome.storage.sync.get({ ...DEFAULTS, aqualRingButtonActions: RING_BUTTON_ACTION_DEFAULTS }, (stored) => {
   applySettings(stored || {});
+  ringButtonActionOverrides = normalizeRingButtonActions(stored ? stored.aqualRingButtonActions : null);
   chrome.storage.local.get(RING_EVENT_POLL_DEFAULTS, (localStored) => {
-    if (localStored && localStored.aqualRingHidEnabled) {
+    if (!localStored || localStored.aqualRingBackendPollingEnabled !== false) {
       startRingBackendPolling();
     } else {
       stopRingBackendPolling();
@@ -2522,14 +2748,20 @@ chrome.storage.sync.get(DEFAULTS, (stored) => {
 });
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName !== "local" || !changes || !changes.aqualRingHidEnabled) {
+  if (!changes) {
     return;
   }
-  const nextValue = Boolean(changes.aqualRingHidEnabled.newValue);
-  if (nextValue) {
-    startRingBackendPolling();
-  } else {
-    stopRingBackendPolling();
+  if (areaName === "local" && changes.aqualRingBackendPollingEnabled) {
+    const nextValue = changes.aqualRingBackendPollingEnabled.newValue;
+    if (nextValue !== false) {
+      startRingBackendPolling();
+    } else {
+      stopRingBackendPolling();
+    }
+    return;
+  }
+  if (areaName === "sync" && changes.aqualRingButtonActions) {
+    ringButtonActionOverrides = normalizeRingButtonActions(changes.aqualRingButtonActions.newValue);
   }
 });
 
@@ -3023,14 +3255,14 @@ function ensureGeminiLiveUi() {
     <style>
       :host {
         all: initial;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        font-family: "Lexend", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
       }
       .card {
-        background: rgba(8, 15, 28, 0.97);
-        color: #e2e8f0;
-        border: 1px solid rgba(148, 163, 184, 0.32);
-        border-radius: 14px;
-        box-shadow: 0 14px 32px rgba(0, 0, 0, 0.38);
+        background: #ffffff;
+        color: #1f2937;
+        border: 1px solid #bbf7d0;
+        border-radius: 12px;
+        box-shadow: 0 10px 24px rgba(15, 23, 42, 0.16);
         overflow: hidden;
       }
       .head {
@@ -3038,43 +3270,48 @@ function ensureGeminiLiveUi() {
         align-items: center;
         justify-content: space-between;
         padding: 9px 11px;
-        border-bottom: 1px solid rgba(148, 163, 184, 0.2);
-        background: rgba(15, 23, 42, 0.9);
+        border-bottom: 1px solid #dcfce7;
+        background: #ecfdf5;
       }
       .title {
         font-size: 12px;
         font-weight: 700;
-        letter-spacing: 0.02em;
-        text-transform: uppercase;
-        color: #bfdbfe;
+        letter-spacing: 0.01em;
+        text-transform: none;
+        color: #166534;
       }
       .close {
         border: 0;
         background: transparent;
-        color: #94a3b8;
+        color: #475569;
         font-size: 17px;
         line-height: 1;
         cursor: pointer;
       }
       .close:hover {
-        color: #f8fafc;
+        color: #0f172a;
       }
       .body {
         padding: 10px 12px;
       }
       .status {
-        font-size: 11px;
-        color: #93c5fd;
+        font-size: 12px;
+        font-weight: 600;
+        color: #166534;
         margin-bottom: 6px;
       }
       .text {
         font-size: 13px;
-        line-height: 1.45;
-        color: #e2e8f0;
+        line-height: 1.5;
+        color: #334155;
         white-space: pre-wrap;
       }
       .text.error {
-        color: #fca5a5;
+        color: #b91c1c;
+        background: #fef2f2;
+        border-left: 3px solid #ef4444;
+        padding: 8px 10px;
+        border-radius: 6px;
       }
     </style>
     <div class="card" role="status" aria-live="polite">
@@ -3137,11 +3374,6 @@ const pressedKeys = new Set();
 let audioHoldPingTimer = null;
 let audioHoldSequence = 0;
 let activeAudioHoldId = 0;
-let delayedVoiceStartTimer = null;
-let delayedVoiceStopTimer = null;
-let delayedVoiceHoldId = 0;
-let delayedVoicePending = false;
-let delayedVoiceActive = false;
 
 function isEditableTarget(target) {
   if (!target) return false;
@@ -3180,10 +3412,36 @@ async function pollRingBackendEvents() {
     const data = await response.json();
     const nextCursor = Number(data && data.cursor);
     const delta = Number(data && data.delta);
+    const events = Array.isArray(data && data.events) ? data.events : [];
     if (Number.isFinite(nextCursor) && nextCursor >= 0) {
       ringEventCursor = nextCursor;
     }
     if (!Number.isFinite(delta) || delta <= 0) {
+      return;
+    }
+
+    if (events.length > 0) {
+      for (const entry of events) {
+        const payload = entry && typeof entry === "object" ? (entry.payload || {}) : {};
+        const actionToken = String(payload.action || "").trim().toLowerCase();
+        const buttonLabel = String(payload.buttonLabel || "").trim().toLowerCase();
+        const action = resolveRingActionForPayload(buttonLabel, actionToken);
+        if (!action || action === "none") {
+          continue;
+        }
+        const now = Date.now();
+        const lastAt = Number(ringEventLastActionAt[action] || 0);
+        if (now - lastAt < RING_EVENT_LOCAL_DEBOUNCE_MS) {
+          continue;
+        }
+        ringEventLastActionAt[action] = now;
+        safeRuntimeMessage({
+          type: "aqual-ring-backend-action",
+          source: "ring-event-poll",
+          action,
+          buttonLabel
+        });
+      }
       return;
     }
 
@@ -3197,7 +3455,12 @@ async function pollRingBackendEvents() {
       return;
     }
     ringEventLastToggleAt = now;
-    safeRuntimeMessage({ type: "aqual-ring-backend-mic-toggle", source: "ring-event-poll" });
+    ringEventLastActionAt.toggle_voice_mic = now;
+    safeRuntimeMessage({
+      type: "aqual-ring-backend-action",
+      source: "ring-event-poll",
+      action: "toggle_voice_mic"
+    });
   } catch (_error) {
     // Ignore backend polling errors to keep page interaction smooth.
   } finally {
@@ -3256,57 +3519,6 @@ function stopAudioHotkeySession() {
   activeAudioHoldId = 0;
 }
 
-function clearDelayedVoiceShortcut(stopActive) {
-  if (delayedVoiceStartTimer) {
-    clearTimeout(delayedVoiceStartTimer);
-    delayedVoiceStartTimer = null;
-  }
-  if (delayedVoiceStopTimer) {
-    clearTimeout(delayedVoiceStopTimer);
-    delayedVoiceStopTimer = null;
-  }
-  if (stopActive && delayedVoiceActive && delayedVoiceHoldId) {
-    safeRuntimeMessage({ type: "aqual-audio-hold", action: "stop", holdId: delayedVoiceHoldId });
-  }
-  delayedVoicePending = false;
-  delayedVoiceActive = false;
-  delayedVoiceHoldId = 0;
-}
-
-function scheduleDelayedVoiceShortcut() {
-  clearDelayedVoiceShortcut(true);
-  if (audioHotkeyActive) {
-    stopAudioHotkeySession();
-  }
-
-  audioHoldSequence += 1;
-  const holdId = audioHoldSequence;
-  delayedVoiceHoldId = holdId;
-  delayedVoicePending = true;
-
-  showGeminiLivePanel("Voice commands", "Alt+L queued. Listening starts in 10 seconds.", { sticky: false });
-
-  delayedVoiceStartTimer = setTimeout(() => {
-    delayedVoiceStartTimer = null;
-    if (!delayedVoicePending || delayedVoiceHoldId !== holdId) return;
-
-    delayedVoicePending = false;
-    delayedVoiceActive = true;
-    safeRuntimeMessage({ type: "aqual-audio-hold", action: "start", holdId });
-    showGeminiLivePanel("Voice commands", "Listening for 5 seconds...", { sticky: false });
-
-    delayedVoiceStopTimer = setTimeout(() => {
-      delayedVoiceStopTimer = null;
-      if (!delayedVoiceActive || delayedVoiceHoldId !== holdId) return;
-
-      delayedVoiceActive = false;
-      safeRuntimeMessage({ type: "aqual-audio-hold", action: "stop", holdId });
-      delayedVoiceHoldId = 0;
-      showGeminiLivePanel("Voice commands", "Stopped listening.", { sticky: false });
-    }, 5000);
-  }, 10000);
-}
-
 document.addEventListener("keydown", (event) => {
   pressedKeys.add(event.code);
   const isAltDown = pressedKeys.has("AltLeft") || pressedKeys.has("AltRight") || event.altKey;
@@ -3314,7 +3526,6 @@ document.addEventListener("keydown", (event) => {
   const isBDown = pressedKeys.has("KeyB") || event.code === "KeyB" || (event.key && event.key.toLowerCase() === "b");
   const isADown = pressedKeys.has("KeyA") || event.code === "KeyA" || (event.key && event.key.toLowerCase() === "a");
   const isDDown = pressedKeys.has("KeyD") || event.code === "KeyD" || (event.key && event.key.toLowerCase() === "d");
-  const isLDown = pressedKeys.has("KeyL") || event.code === "KeyL" || (event.key && event.key.toLowerCase() === "l");
   if (event.ctrlKey || event.metaKey) return;
 
   if (!event.repeat && isAltDown && isCDown) {
@@ -3334,22 +3545,14 @@ document.addEventListener("keydown", (event) => {
 
   if (!event.repeat && isAltDown && isDDown) {
     event.preventDefault();
-    clearDelayedVoiceShortcut(true);
     stopAudioHotkeySession();
     safeRuntimeMessage({ type: "aqual-gemini-live-toggle" });
     showGeminiLivePanel("Gemini Live", "Toggling live call...", { sticky: false });
     return;
   }
 
-  if (!event.repeat && isAltDown && isLDown) {
-    event.preventDefault();
-    scheduleDelayedVoiceShortcut();
-    return;
-  }
-
   if (audioHotkeyActive || event.repeat) return;
   if (!(isAltDown && isADown)) return;
-  clearDelayedVoiceShortcut(true);
   audioHotkeyActive = true;
   audioHoldSequence += 1;
   activeAudioHoldId = audioHoldSequence;
@@ -3372,7 +3575,6 @@ document.addEventListener("keyup", (event) => {
 
 window.addEventListener("blur", () => {
   stopAudioHotkeySession();
-  clearDelayedVoiceShortcut(true);
   stopSelectionSpeechPlayback();
   if (lineGuideOverlay) {
     lineGuideOverlay.style.opacity = "0";

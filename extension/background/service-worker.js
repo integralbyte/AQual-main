@@ -135,12 +135,79 @@ const RING_HID_USAGE_PAGE = 0x000d;
 const RING_HID_DEBOUNCE_MS = 320;
 const RING_HID_DEFAULT_STATUS = "Not connected. Press Connect and choose your ring.";
 const BACKEND_RING_TOGGLE_DEBOUNCE_MS = 240;
+const RING_FONT_SIZE_STEPS = [24, 32, 40, 50, 60, 72];
+const RING_MAGNIFIER_SIZE_STEPS = [30, 40, 50, 60, 70, 80, 90, 100];
+const RING_MAGNIFIER_ZOOM_STEPS = [1, 2, 3, 4, 5];
+const RING_DIMMING_STEPS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7];
+const RING_BLUE_LIGHT_STEPS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6];
+const RING_FONT_FAMILY_STEPS = [
+  "open-dyslexic",
+  "lexend",
+  "sign-language",
+  "arial",
+  "verdana",
+  "impact",
+  "comic-sans"
+];
+const RING_CURSOR_STEPS = ["arrow-large.png", "black-large.cur", "pencil-large.png"];
+const RING_COLOUR_VISION_STEPS = ["none", "protanopia", "deuteranopia", "tritanopia"];
+const RING_FONT_COLOUR_STEPS = [
+  "#1FBC9C",
+  "#1CA085",
+  "#2ECC70",
+  "#27AF60",
+  "#3398DB",
+  "#2980B9",
+  "#A463BF",
+  "#3D556E",
+  "#222F3D",
+  "#F2C511",
+  "#F39C19",
+  "#E84A3C",
+  "#C0382B",
+  "#DDE6E8",
+  "#BDC3C8"
+];
+const RING_ACTION_TOGGLE_MAP = {
+  toggle_high_contrast: { key: "highContrastEnabled", label: "high contrast" },
+  toggle_night_mode: { key: "nightModeEnabled", label: "night reading mode" },
+  toggle_blue_light: { key: "blueLightEnabled", label: "blue-light filter" },
+  toggle_dimming: { key: "dimmingEnabled", label: "brightness dimming" },
+  toggle_font_family: { key: "fontEnabled", label: "font family" },
+  toggle_font_size: { key: "fontSizeEnabled", label: "font size" },
+  toggle_font_color: { key: "fontColorEnabled", label: "font colour" },
+  toggle_text_stroke: { key: "textStrokeEnabled", label: "text stroke" },
+  toggle_reduced_crowding: { key: "reducedCrowdingEnabled", label: "reduced text crowding" },
+  toggle_link_emphasis: { key: "linkEmphasisEnabled", label: "link emphasis" },
+  toggle_cursor: { key: "cursorEnabled", label: "pointer style" },
+  toggle_image_veil: { key: "imageVeilEnabled", label: "image veil" },
+  toggle_highlight: { key: "highlightEnabled", label: "highlight words" },
+  toggle_line_guide: { key: "lineGuideEnabled", label: "BeeLine line guide" },
+  toggle_drawing: { key: "drawingEnabled", label: "drawing mode" },
+  toggle_magnifier: { key: "magnifierEnabled", label: "magnifier" }
+};
+const RING_KEY_ACTION_LABELS = {
+  key_arrow_up: "Arrow Up",
+  key_arrow_down: "Arrow Down",
+  key_arrow_left: "Arrow Left",
+  key_arrow_right: "Arrow Right",
+  key_space: "Space",
+  key_enter: "Enter",
+  key_escape: "Escape",
+  key_tab: "Tab",
+  key_backspace: "Backspace",
+  key_page_up: "Page Up",
+  key_page_down: "Page Down",
+  key_home: "Home",
+  key_end: "End"
+};
 
 let ringHidHandlersByKey = new Map();
 let ringHidPressedByKey = new Map();
 let ringHidEventsAttached = false;
 let ringHidLastToggleAt = 0;
-let backendRingLastToggleAt = 0;
+let backendRingLastToggleAtByAction = new Map();
+let backendRingPollingEnabled = true;
 
 function localGet(defaults) {
   return new Promise((resolve) => {
@@ -252,6 +319,329 @@ function toggleVoiceCommandMicFromRing(source = "ring", device = null) {
   });
 }
 
+function shouldIgnoreBackendRingToggle(action) {
+  const actionKey = String(action || "").trim().toLowerCase() || "ring-action";
+  const now = Date.now();
+  const lastAt = Number(backendRingLastToggleAtByAction.get(actionKey) || 0);
+  if (now - lastAt < BACKEND_RING_TOGGLE_DEBOUNCE_MS) {
+    return true;
+  }
+  backendRingLastToggleAtByAction.set(actionKey, now);
+  return false;
+}
+
+function isRingEventPollMessage(message) {
+  return String(message && message.source ? message.source : "").trim().toLowerCase() === "ring-event-poll";
+}
+
+function ringButtonPrefix(buttonLabel) {
+  const ringButton = String(buttonLabel || "").trim().toLowerCase();
+  return ringButton ? `${ringButton} button ` : "";
+}
+
+function getRingTargetTabId(sender) {
+  if (sender && sender.tab && typeof sender.tab.id === "number") {
+    return sender.tab.id;
+  }
+  return 0;
+}
+
+function sendSettingsToRingTargetTab(settings, targetTabId = 0) {
+  if (Number.isFinite(targetTabId) && targetTabId > 0) {
+    sendToTab(targetTabId, settings);
+    return;
+  }
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    if (tabs && tabs.length && tabs[0] && typeof tabs[0].id === "number") {
+      sendToTab(tabs[0].id, settings);
+    }
+  });
+}
+
+function setRingStatus(statusText) {
+  localSet({
+    aqualRingHidStatus: statusText,
+    aqualRingHidLastToggleAt: Date.now()
+  });
+}
+
+function toggleAccessibilitySettingFromRing(settingKey, featureLabel, source = "ring-backend-monitor", buttonLabel = "", targetTabId = 0) {
+  const sourceLabel = String(source || "ring");
+  const buttonPrefix = ringButtonPrefix(buttonLabel);
+  getSettings((settings) => {
+    const nextEnabled = !Boolean(settings[settingKey]);
+    settings[settingKey] = nextEnabled;
+    chrome.storage.sync.set({ [settingKey]: nextEnabled }, () => {
+      sendSettingsToRingTargetTab(settings, targetTabId);
+      setRingStatus(`Ring ${buttonPrefix}${featureLabel} ${nextEnabled ? "ON" : "OFF"} (${sourceLabel}).`);
+    });
+  });
+}
+
+function normalizeRingComparableValue(value) {
+  if (typeof value === "string") return value.toLowerCase();
+  if (typeof value === "number") return Number(value.toFixed(4));
+  return value;
+}
+
+function findRingCycleIndex(values, currentValue) {
+  const currentComparable = normalizeRingComparableValue(currentValue);
+  for (let i = 0; i < values.length; i += 1) {
+    if (normalizeRingComparableValue(values[i]) === currentComparable) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function cycleRingSettingFromList({
+  settingKey,
+  values,
+  featureLabel,
+  source = "ring-backend-monitor",
+  buttonLabel = "",
+  targetTabId = 0,
+  forceEnableKey = "",
+  valueFormatter = null
+}) {
+  if (!Array.isArray(values) || values.length === 0) return;
+  const sourceLabel = String(source || "ring");
+  const buttonPrefix = ringButtonPrefix(buttonLabel);
+  getSettings((settings) => {
+    const currentValue = settings[settingKey];
+    const currentIndex = findRingCycleIndex(values, currentValue);
+    const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % values.length : 0;
+    const nextValue = values[nextIndex];
+    settings[settingKey] = nextValue;
+    const patch = { [settingKey]: nextValue };
+    if (forceEnableKey) {
+      settings[forceEnableKey] = true;
+      patch[forceEnableKey] = true;
+    }
+    chrome.storage.sync.set(patch, () => {
+      sendSettingsToRingTargetTab(settings, targetTabId);
+      const rawLabel = typeof valueFormatter === "function" ? valueFormatter(nextValue) : String(nextValue);
+      setRingStatus(`Ring ${buttonPrefix}${featureLabel}: ${rawLabel} (${sourceLabel}).`);
+    });
+  });
+}
+
+function sendRingCommandToTargetTab(payload, source = "ring-backend-monitor", buttonLabel = "", sender = null, statusLabel = "") {
+  const sourceLabel = String(source || "ring");
+  const buttonPrefix = ringButtonPrefix(buttonLabel);
+  const targetTabId = getRingTargetTabId(sender);
+  const finish = () => {
+    if (statusLabel) {
+      setRingStatus(`Ring ${buttonPrefix}${statusLabel} (${sourceLabel}).`);
+    }
+  };
+  if (targetTabId > 0) {
+    chrome.tabs.sendMessage(targetTabId, payload, () => {
+      finish();
+    });
+    return;
+  }
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    if (tabs && tabs.length && tabs[0] && typeof tabs[0].id === "number") {
+      chrome.tabs.sendMessage(tabs[0].id, payload, () => {
+        finish();
+      });
+      return;
+    }
+    finish();
+  });
+}
+
+function executeRingBackendAction(action, source = "ring-backend-monitor", buttonLabel = "", sender = null) {
+  const actionToken = String(action || "").trim().toLowerCase();
+  if (!actionToken || actionToken === "none") {
+    return true;
+  }
+
+  const sourceLabel = String(source || "ring");
+  const targetTabId = getRingTargetTabId(sender);
+  const toggleDescriptor = RING_ACTION_TOGGLE_MAP[actionToken];
+  if (toggleDescriptor) {
+    toggleAccessibilitySettingFromRing(
+      toggleDescriptor.key,
+      toggleDescriptor.label,
+      source,
+      buttonLabel,
+      targetTabId
+    );
+    return true;
+  }
+
+  if (actionToken === "toggle_voice_mic") {
+    toggleVoiceCommandMicFromRing(sourceLabel, null);
+    return true;
+  }
+  if (actionToken === "toggle_gemini_live") {
+    const nextStateOn = !geminiLiveCallActive;
+    const now = Date.now();
+    if (now - geminiLiveLastToggleAt < GEMINI_LIVE_TOGGLE_DEBOUNCE_MS) {
+      return true;
+    }
+    geminiLiveLastToggleAt = now;
+    toggleGeminiLiveCall(sender);
+    setRingStatus(`Ring ${ringButtonPrefix(buttonLabel)}Gemini Live call ${nextStateOn ? "ON" : "OFF"} (${sourceLabel}).`);
+    return true;
+  }
+
+  if (actionToken === "cycle_color_vision") {
+    cycleRingSettingFromList({
+      settingKey: "colorBlindMode",
+      values: RING_COLOUR_VISION_STEPS,
+      featureLabel: "colour vision mode",
+      source,
+      buttonLabel,
+      targetTabId
+    });
+    return true;
+  }
+  if (actionToken === "cycle_font_family") {
+    cycleRingSettingFromList({
+      settingKey: "fontFamily",
+      values: RING_FONT_FAMILY_STEPS,
+      featureLabel: "font family",
+      source,
+      buttonLabel,
+      targetTabId,
+      forceEnableKey: "fontEnabled"
+    });
+    return true;
+  }
+  if (actionToken === "cycle_cursor") {
+    cycleRingSettingFromList({
+      settingKey: "cursorType",
+      values: RING_CURSOR_STEPS,
+      featureLabel: "pointer style",
+      source,
+      buttonLabel,
+      targetTabId,
+      forceEnableKey: "cursorEnabled"
+    });
+    return true;
+  }
+  if (actionToken === "cycle_font_size") {
+    cycleRingSettingFromList({
+      settingKey: "fontSizePx",
+      values: RING_FONT_SIZE_STEPS,
+      featureLabel: "font size",
+      source,
+      buttonLabel,
+      targetTabId,
+      forceEnableKey: "fontSizeEnabled",
+      valueFormatter: (value) => `${value}px`
+    });
+    return true;
+  }
+  if (actionToken === "cycle_magnifier_size") {
+    cycleRingSettingFromList({
+      settingKey: "magnifierSize",
+      values: RING_MAGNIFIER_SIZE_STEPS,
+      featureLabel: "magnifier size",
+      source,
+      buttonLabel,
+      targetTabId,
+      forceEnableKey: "magnifierEnabled",
+      valueFormatter: (value) => `${value}px`
+    });
+    return true;
+  }
+  if (actionToken === "cycle_magnifier_zoom") {
+    cycleRingSettingFromList({
+      settingKey: "magnifierZoom",
+      values: RING_MAGNIFIER_ZOOM_STEPS,
+      featureLabel: "magnification",
+      source,
+      buttonLabel,
+      targetTabId,
+      forceEnableKey: "magnifierEnabled",
+      valueFormatter: (value) => `${value}x`
+    });
+    return true;
+  }
+  if (actionToken === "cycle_dimming_level") {
+    cycleRingSettingFromList({
+      settingKey: "dimmingLevel",
+      values: RING_DIMMING_STEPS,
+      featureLabel: "dimming level",
+      source,
+      buttonLabel,
+      targetTabId,
+      forceEnableKey: "dimmingEnabled",
+      valueFormatter: (value) => `${Math.round(Number(value) * 100)}%`
+    });
+    return true;
+  }
+  if (actionToken === "cycle_blue_light_level") {
+    cycleRingSettingFromList({
+      settingKey: "blueLightLevel",
+      values: RING_BLUE_LIGHT_STEPS,
+      featureLabel: "blue-light level",
+      source,
+      buttonLabel,
+      targetTabId,
+      forceEnableKey: "blueLightEnabled",
+      valueFormatter: (value) => `${Math.round(Number(value) * 100)}%`
+    });
+    return true;
+  }
+  if (actionToken === "cycle_font_color") {
+    cycleRingSettingFromList({
+      settingKey: "fontColor",
+      values: RING_FONT_COLOUR_STEPS,
+      featureLabel: "font colour",
+      source,
+      buttonLabel,
+      targetTabId,
+      forceEnableKey: "fontColorEnabled",
+      valueFormatter: (value) => String(value || "").toUpperCase()
+    });
+    return true;
+  }
+  if (actionToken === "cycle_text_stroke_color") {
+    cycleRingSettingFromList({
+      settingKey: "textStrokeColor",
+      values: RING_FONT_COLOUR_STEPS,
+      featureLabel: "text stroke colour",
+      source,
+      buttonLabel,
+      targetTabId,
+      forceEnableKey: "textStrokeEnabled",
+      valueFormatter: (value) => String(value || "").toUpperCase()
+    });
+    return true;
+  }
+
+  if (actionToken === "clear_drawings") {
+    sendRingCommandToTargetTab({ type: "aqual-clear-drawings" }, source, buttonLabel, sender, "clear drawings");
+    return true;
+  }
+  if (actionToken === "print_page") {
+    sendRingCommandToTargetTab({ type: "aqual-print" }, source, buttonLabel, sender, "print page");
+    return true;
+  }
+  if (actionToken === "capture_screenshot") {
+    captureScreenshot();
+    setRingStatus(`Ring ${ringButtonPrefix(buttonLabel)}capture screenshot (${sourceLabel}).`);
+    return true;
+  }
+  if (Object.prototype.hasOwnProperty.call(RING_KEY_ACTION_LABELS, actionToken)) {
+    sendRingCommandToTargetTab(
+      { type: "aqual-ring-key-command", action: actionToken },
+      source,
+      buttonLabel,
+      sender,
+      `key ${RING_KEY_ACTION_LABELS[actionToken]}`
+    );
+    return true;
+  }
+
+  return false;
+}
+
 function handleRingHidInputReport(event) {
   const device = event ? event.device : null;
   const key = ringHidDeviceKey(device);
@@ -339,6 +729,14 @@ async function detachAllRingHidExcept(selectedKey) {
 }
 
 async function connectRingHidDevice(selection) {
+  if (backendRingPollingEnabled) {
+    await localSet({
+      aqualRingHidEnabled: false,
+      aqualRingHidStatus: "WebHID ring input disabled while backend ring monitor polling is active."
+    });
+    return { ok: false, error: "Backend ring monitor polling is active." };
+  }
+
   const selected = normalizeRingHidDeviceInfo(selection);
   if (!selected) {
     return { ok: false, error: "Invalid ring HID device info." };
@@ -372,7 +770,7 @@ async function connectRingHidDevice(selection) {
       productId: Number(device.productId || selected.productId),
       productName: String(device.productName || selected.productName || "Ring HID device")
     },
-    aqualRingHidStatus: `${formatRingHidDeviceLabel(device)} connected. Press the ring button to toggle voice mic on/off.`
+    aqualRingHidStatus: `${formatRingHidDeviceLabel(device)} connected. Configure button actions from Ring Settings in the popup.`
   });
 
   return { ok: true };
@@ -441,10 +839,24 @@ function ensureRingHidEvents() {
 async function initializeRingHid() {
   ensureRingHidEvents();
   const stored = await localGet({
+    aqualRingBackendPollingEnabled: true,
     aqualRingHidEnabled: false,
     aqualRingHidDevice: null,
     aqualRingHidStatus: RING_HID_DEFAULT_STATUS
   });
+  backendRingPollingEnabled = stored.aqualRingBackendPollingEnabled !== false;
+
+  if (backendRingPollingEnabled) {
+    if (stored.aqualRingHidEnabled || ringHidHandlersByKey.size > 0) {
+      await disconnectRingHid(true);
+    }
+    await localSet({
+      aqualRingHidEnabled: false,
+      aqualRingHidStatus: "WebHID ring input disabled while backend ring monitor polling is active."
+    });
+    return;
+  }
+
   const selected = normalizeRingHidDeviceInfo(stored.aqualRingHidDevice);
   if (stored.aqualRingHidEnabled && selected) {
     await connectRingHidDevice(selected);
@@ -4811,10 +5223,29 @@ initializeRingHid().catch((error) => {
   }));
 });
 
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== "local" || !changes || !changes.aqualRingBackendPollingEnabled) {
+    return;
+  }
+  backendRingPollingEnabled = changes.aqualRingBackendPollingEnabled.newValue !== false;
+  if (!backendRingPollingEnabled) {
+    return;
+  }
+  disconnectRingHid(true)
+    .then(() => localSet({
+      aqualRingHidEnabled: false,
+      aqualRingHidStatus: "WebHID ring input disabled while backend ring monitor polling is active."
+    }))
+    .catch(() => {
+      // Ignore best-effort WebHID detach errors.
+    });
+});
+
 chrome.runtime.onInstalled.addListener((details) => {
   if (details.reason === "install") {
     chrome.storage.sync.set({ ...DEFAULTS });
     chrome.storage.local.set({
+      aqualRingBackendPollingEnabled: true,
       aqualRingHidEnabled: false,
       aqualRingHidDevice: null,
       aqualRingHidStatus: RING_HID_DEFAULT_STATUS
@@ -4823,6 +5254,7 @@ chrome.runtime.onInstalled.addListener((details) => {
 });
 
 chrome.runtime.onStartup.addListener(() => {
+  chrome.storage.local.set({ aqualRingBackendPollingEnabled: true });
   initializeRingHid().catch((error) => {
     console.warn("[aqual-ring-hid]", JSON.stringify({
       event: "startup_init_error",
@@ -4905,15 +5337,49 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
     return true;
   }
-  if (message.type === "aqual-ring-backend-toggle" || message.type === "aqual-ring-backend-mic-toggle") {
-    const now = Date.now();
-    if (now - backendRingLastToggleAt < BACKEND_RING_TOGGLE_DEBOUNCE_MS) {
+  if (
+    message.type === "aqual-ring-backend-action"
+    || message.type === "aqual-ring-backend-toggle"
+    || message.type === "aqual-ring-backend-mic-toggle"
+    || message.type === "aqual-ring-backend-high-contrast-toggle"
+    || message.type === "aqual-ring-backend-line-guide-toggle"
+    || message.type === "aqual-ring-backend-image-veil-toggle"
+    || message.type === "aqual-ring-backend-reduced-crowding-toggle"
+    || message.type === "aqual-ring-backend-font-color-toggle"
+  ) {
+    const legacyTypeToAction = {
+      "aqual-ring-backend-toggle": "toggle_voice_mic",
+      "aqual-ring-backend-mic-toggle": "toggle_voice_mic",
+      "aqual-ring-backend-high-contrast-toggle": "toggle_high_contrast",
+      "aqual-ring-backend-line-guide-toggle": "toggle_line_guide",
+      "aqual-ring-backend-image-veil-toggle": "toggle_image_veil",
+      "aqual-ring-backend-reduced-crowding-toggle": "toggle_reduced_crowding",
+      "aqual-ring-backend-font-color-toggle": "toggle_font_color"
+    };
+    const actionToken = String(
+      message.action
+      || legacyTypeToAction[message.type]
+      || ""
+    ).trim().toLowerCase();
+    if (!actionToken) {
+      sendResponse({ ok: true, ignored: true, reason: "missing_action" });
+      return false;
+    }
+    if (shouldIgnoreBackendRingToggle(actionToken)) {
       sendResponse({ ok: true, ignored: true });
       return false;
     }
-    backendRingLastToggleAt = now;
-    toggleVoiceCommandMicFromRing(String(message.source || "backend-ring-monitor"), null);
-    sendResponse({ ok: true });
+    const executed = executeRingBackendAction(
+      actionToken,
+      String(message.source || "backend-ring-monitor"),
+      String(message.buttonLabel || ""),
+      sender
+    );
+    if (!executed) {
+      sendResponse({ ok: true, ignored: true, reason: "unsupported_action", action: actionToken });
+      return false;
+    }
+    sendResponse({ ok: true, action: actionToken });
     return false;
   }
   if (message.type === "aqual-audio-mode") {
