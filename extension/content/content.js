@@ -535,6 +535,87 @@ function readingModeTextLengthOfRoots(roots) {
   }, 0);
 }
 
+function readingModeTextLength(element) {
+  if (!(element instanceof Element)) return 0;
+  return String(element.innerText || "").replace(/\s+/g, " ").trim().length;
+}
+
+function readingModePickPrimaryRoot(roots) {
+  const candidates = [];
+  const seen = new Set();
+  const semanticSelectors = [
+    "article",
+    "[itemprop='articleBody']",
+    "[role='article']",
+    "main",
+    "section[class*='article' i]",
+    "div[class*='article' i]",
+    "section[class*='story' i]",
+    "div[class*='story' i]",
+    "section[class*='content' i]",
+    "div[class*='content' i]"
+  ].join(",");
+
+  roots.forEach((root) => {
+    if (!(root instanceof Element)) return;
+    if (!seen.has(root)) {
+      seen.add(root);
+      candidates.push(root);
+    }
+
+    const scoped = readingModeQuerySelectorAll(semanticSelectors);
+    for (let i = 0; i < scoped.length && i < 160; i += 1) {
+      const node = scoped[i];
+      if (!(node instanceof Element)) continue;
+      if (seen.has(node)) continue;
+      if (!root.contains(node) && node !== root) continue;
+      if (node.getAttribute("data-aqual-reading-hidden") === "1") continue;
+      const textLen = readingModeTextLength(node);
+      if (textLen < 200) continue;
+      seen.add(node);
+      candidates.push(node);
+    }
+  });
+
+  let best = null;
+  let bestScore = -1;
+  candidates.forEach((node) => {
+    const textLen = readingModeTextLength(node);
+    if (textLen < 180) return;
+    const depth = readingModeElementDepth(node);
+    const tag = String(node.tagName || "").toUpperCase();
+    const tagBonus = /^(ARTICLE|MAIN|SECTION)$/.test(tag) ? 220 : 0;
+    const hintText = `${node.id || ""} ${node.className || ""}`.toLowerCase();
+    const hintBonus = /(article|story|content|post|entry|body|copy|text)/.test(hintText) ? 180 : 0;
+    const width = Number(node.getBoundingClientRect ? node.getBoundingClientRect().width : 0);
+    const narrowPenalty = width > 0 && width < 320 ? 480 : 0;
+    const score = textLen + (depth * 8) + tagBonus + hintBonus - narrowPenalty;
+    if (score > bestScore) {
+      bestScore = score;
+      best = node;
+    }
+  });
+
+  return best || roots[0] || null;
+}
+
+function readingModeCenterPrimaryRoot(primaryRoot) {
+  if (!(primaryRoot instanceof Element)) return;
+  primaryRoot.style.setProperty("--aqual-reading-offset-x", "0px");
+  const viewportWidth = Math.max(
+    Number(window.innerWidth || 0),
+    Number(document.documentElement && document.documentElement.clientWidth ? document.documentElement.clientWidth : 0),
+  );
+  if (!viewportWidth) return;
+  const rect = primaryRoot.getBoundingClientRect();
+  if (!rect || !Number.isFinite(rect.left) || !Number.isFinite(rect.width) || rect.width <= 0) return;
+  const sidePadding = 16;
+  const targetLeft = Math.max(sidePadding, (viewportWidth - rect.width) / 2);
+  const delta = targetLeft - rect.left;
+  if (!Number.isFinite(delta)) return;
+  primaryRoot.style.setProperty("--aqual-reading-offset-x", `${Math.round(delta)}px`);
+}
+
 function readingModeSelectorIsAggressiveExclude(selector) {
   const token = String(selector || "").trim().toLowerCase();
   if (!token) return true;
@@ -558,6 +639,14 @@ function clearReadingModeDom() {
   const hiddenNodes = document.querySelectorAll("[data-aqual-reading-hidden='1']");
   hiddenNodes.forEach((node) => {
     node.removeAttribute("data-aqual-reading-hidden");
+  });
+  const rootNodes = document.querySelectorAll("[data-aqual-reading-root='1'], [data-aqual-reading-primary-root='1']");
+  rootNodes.forEach((node) => {
+    node.removeAttribute("data-aqual-reading-root");
+    node.removeAttribute("data-aqual-reading-primary-root");
+    if (node instanceof HTMLElement) {
+      node.style.removeProperty("--aqual-reading-offset-x");
+    }
   });
 }
 
@@ -651,7 +740,20 @@ function applyReadingModePlan(plan) {
     return { ok: false, error: "Reading mode filtered too aggressively on this page." };
   }
 
+  // Mark kept roots and choose a single primary root to outline/centre.
+  const primaryRoot = readingModePickPrimaryRoot(roots);
+  roots.forEach((root) => {
+    if (!(root instanceof Element)) return;
+    root.setAttribute("data-aqual-reading-root", "1");
+  });
+  if (primaryRoot instanceof Element) {
+    primaryRoot.setAttribute("data-aqual-reading-primary-root", "1");
+  }
+
   document.documentElement.classList.add("aqual-reading-mode-active");
+  if (primaryRoot instanceof Element) {
+    readingModeCenterPrimaryRoot(primaryRoot);
+  }
   return { ok: true, rootCount: roots.length, hiddenCount };
 }
 

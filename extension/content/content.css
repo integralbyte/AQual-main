@@ -211,3 +211,56 @@ html.aqual-high-contrast body *:not(img):not(video):not(canvas):not(svg):not(pat
 html.aqual-reading-mode-active [data-aqual-reading-hidden="1"] {
   display: none !important;
 }
+
+html.aqual-reading-mode-active [data-aqual-reading-primary-root="1"] {
+  box-sizing: border-box !important;
+  display: block !important;
+  width: min(920px, calc(100vw - 32px)) !important;
+  max-width: min(920px, calc(100vw - 32px)) !important;
+  margin: 0 !important;
+  padding: clamp(16px, 2.8vw, 32px) !important;
+  border-radius: 18px !important;
+  border: 1px solid #c7d2e0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  float: none !important;
+  position: relative !important;
+  left: var(--aqual-reading-offset-x, 0px) !important;
+  right: auto !important;
+  transform: none !important;
+  height: auto !important;
+  overflow: visible !important;
+}
+
+html.aqual-reading-mode-active [data-aqual-reading-primary-root="1"] > :not(style):not(script) {
+  display: block !important;
+  width: min(100%, 860px) !important;
+  max-width: min(100%, 860px) !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  text-align: left !important;
+}
+
+html.aqual-reading-mode-active [data-aqual-reading-root="1"]:not([data-aqual-reading-primary-root="1"]) {
+  width: min(100%, 860px) !important;
+  max-width: min(100%, 860px) !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+
+html.aqual-reading-mode-active [data-aqual-reading-primary-root="1"],
+html.aqual-reading-mode-active [data-aqual-reading-primary-root="1"] * {
+  box-shadow: none !important;
+  text-shadow: none !important;
+}
+
+html.aqual-reading-mode-active [data-aqual-reading-primary-root="1"] :where(h1, h2, h3, h4, h5, h6, p, li, blockquote, figcaption, dd, dt, pre, code) {
+  text-align: left !important;
+}
+
+html.aqual-reading-mode-active [data-aqual-reading-primary-root="1"] :where(img, video, canvas, svg, figure, table, iframe, picture) {
+  display: block !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  max-width: 100% !important;
+}
