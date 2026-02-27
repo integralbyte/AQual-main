@@ -76,12 +76,128 @@ const RING_HID_FILTERS = [
   { usagePage: 0x000d }
 ];
 const RING_HID_DEFAULT_STATUS = "Not connected. Press Connect and choose your ring.";
+const RING_BUTTON_ORDER = ["right", "left", "bottom", "top", "center", "home"];
+const RING_BUTTON_ACTION_DEFAULTS = {
+  right: "toggle_image_veil",
+  left: "toggle_line_guide",
+  bottom: "toggle_font_color",
+  top: "toggle_reduced_crowding",
+  center: "toggle_voice_mic",
+  home: "toggle_high_contrast"
+};
+const RING_ACTION_OPTIONS = [
+  { value: "toggle_voice_mic", label: "Toggle: Voice Commands mic" },
+  { value: "toggle_gemini_live", label: "Toggle: Gemini Live call" },
+  { value: "toggle_high_contrast", label: "Toggle: High contrast" },
+  { value: "toggle_night_mode", label: "Toggle: Night reading mode" },
+  { value: "toggle_blue_light", label: "Toggle: Blue-light filter" },
+  { value: "toggle_dimming", label: "Toggle: Brightness dimming" },
+  { value: "toggle_font_family", label: "Toggle: Font family" },
+  { value: "toggle_font_size", label: "Toggle: Font size" },
+  { value: "toggle_font_color", label: "Toggle: Font colour" },
+  { value: "toggle_text_stroke", label: "Toggle: Text stroke" },
+  { value: "toggle_reduced_crowding", label: "Toggle: Reduced text crowding" },
+  { value: "toggle_link_emphasis", label: "Toggle: Emphasise links" },
+  { value: "toggle_cursor", label: "Toggle: Pointer style" },
+  { value: "toggle_image_veil", label: "Toggle: Image veil" },
+  { value: "toggle_highlight", label: "Toggle: Highlight words" },
+  { value: "toggle_line_guide", label: "Toggle: BeeLine line guide" },
+  { value: "toggle_drawing", label: "Toggle: Draw on page" },
+  { value: "toggle_magnifier", label: "Toggle: Magnifier" },
+  { value: "cycle_color_vision", label: "Cycle: Colour vision mode" },
+  { value: "cycle_font_family", label: "Cycle: Font family" },
+  { value: "cycle_cursor", label: "Cycle: Pointer style" },
+  { value: "cycle_font_size", label: "Cycle: Font size" },
+  { value: "cycle_magnifier_size", label: "Cycle: Magnifier size" },
+  { value: "cycle_magnifier_zoom", label: "Cycle: Magnification" },
+  { value: "cycle_dimming_level", label: "Cycle: Dimming level" },
+  { value: "cycle_blue_light_level", label: "Cycle: Blue-light level" },
+  { value: "cycle_font_color", label: "Cycle: Font colour" },
+  { value: "cycle_text_stroke_color", label: "Cycle: Text stroke colour" },
+  { value: "clear_drawings", label: "Action: Clear drawings" },
+  { value: "print_page", label: "Action: Print page" },
+  { value: "capture_screenshot", label: "Action: Capture screenshot" },
+  { value: "key_arrow_up", label: "Key: Arrow Up" },
+  { value: "key_arrow_down", label: "Key: Arrow Down" },
+  { value: "key_arrow_left", label: "Key: Arrow Left" },
+  { value: "key_arrow_right", label: "Key: Arrow Right" },
+  { value: "key_space", label: "Key: Space" },
+  { value: "key_enter", label: "Key: Enter" },
+  { value: "key_escape", label: "Key: Escape" },
+  { value: "key_tab", label: "Key: Tab" },
+  { value: "key_backspace", label: "Key: Backspace" },
+  { value: "key_page_up", label: "Key: Page Up" },
+  { value: "key_page_down", label: "Key: Page Down" },
+  { value: "key_home", label: "Key: Home" },
+  { value: "key_end", label: "Key: End" },
+  { value: "none", label: "Do nothing" }
+];
+const RING_ACTION_OPTION_VALUES = new Set(RING_ACTION_OPTIONS.map((item) => item.value));
+const FEATURE_ICON_BY_PRIMARY_ID = {
+  fontFamilySelect: "text",
+  fontSizeRange: "size",
+  fontColorPalette: "colour",
+  textStrokePalette: "outline",
+  reducedCrowdingEnabled: "spacing",
+  linkEmphasisEnabled: "link",
+  cursorTypeSelect: "pointer",
+  docUploadInput: "document",
+  imageVeilEnabled: "image",
+  highlightEnabled: "highlight",
+  lineGuideEnabled: "lineguide",
+  drawingEnabled: "draw",
+  clearDrawings: "clear",
+  magnifierEnabled: "magnifier",
+  magnifierSizeRange: "lenssize",
+  magnifierZoomRange: "zoom",
+  highContrastEnabled: "contrast",
+  colorBlindModeSelect: "palette",
+  ringHidConnect: "ring",
+  nightModeEnabled: "moon",
+  dimmingRange: "dim",
+  blueLightRange: "warm",
+  printPage: "print",
+  captureScreenshot: "camera"
+};
+const FEATURE_ICON_SVG = {
+  text: "<path d='M4 6h16M8 11h8M10 16h4' />",
+  size: "<path d='M6 18l3-10 3 10M7.2 14h3.6M14.5 8h4M16.5 8v8M14.5 12h4' />",
+  colour: "<path d='M12 3c-3 3-6 6-6 9a6 6 0 0 0 12 0c0-3-3-6-6-9z' />",
+  outline: "<rect x='5' y='5' width='14' height='14' rx='2' /><path d='M8 8h8v8H8z' />",
+  spacing: "<path d='M7 6v12M11 6v12M13 6v12M17 6v12' />",
+  link: "<path d='M10 14l4-4' /><path d='M7 15a4 4 0 0 1 0-6l2-2a4 4 0 0 1 6 0' /><path d='M17 9a4 4 0 0 1 0 6l-2 2a4 4 0 0 1-6 0' />",
+  pointer: "<path d='M6 3l10 10-4 1 2 6-2 1-2-6-4 3z' />",
+  document: "<path d='M8 3h8l4 4v14H8z' /><path d='M16 3v5h4M11 12h6M11 16h6' />",
+  image: "<rect x='4' y='5' width='16' height='14' rx='2' /><path d='M8 14l2-2 2 2 3-3 3 4' /><circle cx='9' cy='9' r='1.2' />",
+  highlight: "<path d='M4 20h6M7 17l7-7 3 3-7 7H7zM13 7l2-2 4 4-2 2' />",
+  lineguide: "<path d='M4 7h16M4 12h16M4 17h10' /><circle cx='17' cy='17' r='2' />",
+  draw: "<path d='M4 20l4-1 10-10-3-3L5 16zM13 6l3 3' />",
+  eraser: "<path d='M5 15l6-6 6 6-4 4H9zM14 19h5' />",
+  clear: "<path d='M9 6h6M10 6V4h4v2M7 6h10l-1 13H8zM11 10v6M13 10v6' />",
+  magnifier: "<circle cx='11' cy='11' r='5' /><path d='M15.5 15.5L20 20' />",
+  lenssize: "<circle cx='12' cy='12' r='4' /><path d='M12 4v3M12 17v3M4 12h3M17 12h3' />",
+  zoom: "<circle cx='11' cy='11' r='5' /><path d='M11 9v4M9 11h4M15.5 15.5L20 20' />",
+  contrast: "<circle cx='12' cy='12' r='8' /><path d='M12 4a8 8 0 0 1 0 16z' />",
+  palette: "<path d='M12 4a8 8 0 1 0 0 16h1a2 2 0 0 0 0-4h-1a2 2 0 0 1 0-4h2a4 4 0 0 0 0-8z' /><circle cx='8' cy='10' r='1' /><circle cx='11' cy='8' r='1' /><circle cx='15' cy='10' r='1' />",
+  ring: "<circle cx='12' cy='12' r='7' /><circle cx='12' cy='12' r='3' />",
+  moon: "<path d='M15 3a8 8 0 1 0 6 12 7 7 0 0 1-6-12z' />",
+  dim: "<circle cx='12' cy='12' r='3' /><path d='M12 4v2M12 18v2M4 12h2M18 12h2M6.5 6.5l1.4 1.4M16.1 16.1l1.4 1.4' />",
+  warm: "<circle cx='12' cy='12' r='4' /><path d='M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1' />",
+  print: "<path d='M7 8V4h10v4' /><rect x='6' y='9' width='12' height='7' rx='1.5' /><path d='M8 16h8v4H8z' />",
+  camera: "<path d='M4 8h4l2-2h4l2 2h4v10H4z' /><circle cx='12' cy='13' r='3' />",
+  spark: "<path d='M12 4l2 4 4 2-4 2-2 4-2-4-4-2 4-2z' />"
+};
 
 let state = { ...DEFAULTS };
+let ringButtonActions = { ...RING_BUTTON_ACTION_DEFAULTS };
 let scrollPersistTimer = null;
 let activeTab = "visual";
 let visualSearchActive = false;
 let visualSectionOpenSnapshot = null;
+let popupInitUiReady = false;
+let popupInitAssetsReady = false;
+let popupInitCompleted = false;
+let popupInitFinalizing = false;
 
 let audioWs = null;
 let audioContext = null;
@@ -146,6 +262,129 @@ function applyTheme(theme) {
 }
 
 const byId = (id) => document.getElementById(id);
+
+function setPopupLoadingState(loading) {
+  const panel = byId("popupPanel");
+  const loadingScreen = byId("popupLoadingScreen");
+  if (panel) {
+    panel.classList.toggle("is-loading", Boolean(loading));
+  }
+  if (document.body) {
+    document.body.classList.toggle("popup-loading-lock", Boolean(loading));
+  }
+  if (loading) {
+    setScrollTop(0);
+  }
+  if (loadingScreen) {
+    loadingScreen.hidden = !loading;
+  }
+}
+
+function tryCompletePopupInit() {
+  if (popupInitCompleted || popupInitFinalizing) return;
+  if (!popupInitUiReady || !popupInitAssetsReady) return;
+  popupInitFinalizing = true;
+  waitForAnimationFrames(2).then(() => {
+    popupInitCompleted = true;
+    popupInitFinalizing = false;
+    setPopupLoadingState(false);
+  });
+}
+
+function preloadImageAsset(fileName) {
+  return new Promise((resolve) => {
+    try {
+      const image = new Image();
+      image.onload = () => {
+        if (typeof image.decode === "function") {
+          image.decode().then(() => resolve()).catch(() => resolve());
+          return;
+        }
+        resolve();
+      };
+      image.onerror = () => resolve();
+      image.src = chrome.runtime.getURL(fileName);
+      if (image.complete && image.naturalWidth > 0) {
+        if (typeof image.decode === "function") {
+          image.decode().then(() => resolve()).catch(() => resolve());
+          return;
+        }
+        resolve();
+      }
+    } catch (_error) {
+      resolve();
+    }
+  });
+}
+
+function waitForAnimationFrames(count = 1) {
+  return new Promise((resolve) => {
+    const remaining = Math.max(1, Number(count) || 1);
+    const step = (left) => {
+      if (left <= 0) {
+        resolve();
+        return;
+      }
+      requestAnimationFrame(() => step(left - 1));
+    };
+    step(remaining);
+  });
+}
+
+async function waitForCriticalFonts() {
+  if (!document.fonts) return;
+  const fontPromises = [
+    document.fonts.ready.catch(() => {}),
+    document.fonts.load('400 14px "Aqual UI"').catch(() => {}),
+    document.fonts.load('600 14px "Aqual UI"').catch(() => {}),
+    document.fonts.load('700 14px "Aqual UI"').catch(() => {})
+  ];
+  await Promise.all(fontPromises);
+  for (let attempts = 0; attempts < 8; attempts += 1) {
+    if (document.fonts.check('14px "Aqual UI"')) {
+      return;
+    }
+    await waitForAnimationFrames(1);
+  }
+}
+
+async function waitForPopupAssets() {
+  const tasks = [
+    waitForCriticalFonts(),
+    preloadImageAsset("assets/images/linkedin-logo.png"),
+    preloadImageAsset("assets/images/aqual-logo.png"),
+    waitForAnimationFrames(2)
+  ];
+  await Promise.all(tasks);
+}
+
+function createFeatureIconElement(token) {
+  const iconToken = FEATURE_ICON_SVG[token] ? token : "spark";
+  const wrapper = document.createElement("span");
+  wrapper.className = "feature-icon";
+  wrapper.setAttribute("aria-hidden", "true");
+
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.classList.add("feature-icon-svg");
+  svg.innerHTML = FEATURE_ICON_SVG[iconToken];
+  wrapper.appendChild(svg);
+  return wrapper;
+}
+
+function decorateControlTitlesWithIcons() {
+  document.querySelectorAll("#tab-visual .control").forEach((control) => {
+    const title = control.querySelector(".control-title");
+    if (!title || title.dataset.aqualIconDecorated === "1") {
+      return;
+    }
+    const primaryControl = control.querySelector(".control-actions [id], .palette[id]");
+    const primaryId = primaryControl ? primaryControl.id : "";
+    const iconToken = FEATURE_ICON_BY_PRIMARY_ID[primaryId] || "spark";
+    title.prepend(createFeatureIconElement(iconToken));
+    title.dataset.aqualIconDecorated = "1";
+  });
+}
 
 function getScrollContainer() {
   return document.scrollingElement
@@ -254,6 +493,18 @@ function setActiveTab(tabId) {
   });
 }
 
+function setAboutPanelOpen(open) {
+  const panel = document.querySelector("main.panel");
+  const aboutPanel = byId("aboutPanel");
+  const aboutToggle = byId("aboutToggle");
+  if (!panel || !aboutPanel || !aboutToggle) {
+    return;
+  }
+  panel.classList.toggle("about-open", Boolean(open));
+  aboutPanel.hidden = !open;
+  aboutToggle.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
 function updateAudioStatus({ recording }) {
   const label = byId("audioStatusText");
   if (label) {
@@ -275,6 +526,63 @@ function formatRingHidDeviceLabel(device) {
   const name = String(device.productName || "").trim();
   const ids = `VID ${toHexId(device.vendorId)} PID ${toHexId(device.productId)}`;
   return name ? `${name} (${ids})` : ids;
+}
+
+function normalizeRingButtonActions(raw) {
+  const source = raw && typeof raw === "object" ? raw : {};
+  const normalized = {};
+  for (const button of RING_BUTTON_ORDER) {
+    const fallback = RING_BUTTON_ACTION_DEFAULTS[button];
+    const requested = String(source[button] || "").trim().toLowerCase();
+    normalized[button] = RING_ACTION_OPTION_VALUES.has(requested) ? requested : fallback;
+  }
+  return normalized;
+}
+
+function renderRingButtonActionSelect(selectEl, selectedAction) {
+  if (!selectEl) return;
+  const selected = String(selectedAction || "").trim().toLowerCase();
+  selectEl.innerHTML = "";
+  for (const option of RING_ACTION_OPTIONS) {
+    const item = document.createElement("option");
+    item.value = option.value;
+    item.textContent = option.label;
+    if (option.value === selected) {
+      item.selected = true;
+    }
+    selectEl.appendChild(item);
+  }
+}
+
+function hydrateRingButtonActions(rawActions) {
+  ringButtonActions = normalizeRingButtonActions(rawActions);
+  document.querySelectorAll(".ring-button-action-select").forEach((selectEl) => {
+    const button = String(selectEl.dataset.ringButton || "").trim().toLowerCase();
+    const selected = ringButtonActions[button] || RING_BUTTON_ACTION_DEFAULTS[button] || "toggle_voice_mic";
+    renderRingButtonActionSelect(selectEl, selected);
+  });
+}
+
+function persistRingButtonActions() {
+  chrome.storage.sync.set({ aqualRingButtonActions: { ...ringButtonActions } });
+}
+
+function setRingSettingsOpen(open) {
+  const panel = byId("ringHidSettingsPanel");
+  const settingsButton = byId("ringHidSettingsToggle");
+  if (!panel) return;
+  panel.hidden = !open;
+  if (settingsButton) {
+    settingsButton.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+}
+
+function openRingSettings() {
+  setRingSettingsOpen(true);
+}
+
+function closeRingSettings() {
+  setRingSettingsOpen(false);
 }
 
 function renderRingHidState(stored = {}) {
@@ -785,11 +1093,53 @@ function bindEvents() {
     });
   }
 
+  const ringSettingsButton = byId("ringHidSettingsToggle");
+  if (ringSettingsButton) {
+    ringSettingsButton.addEventListener("click", () => {
+      openRingSettings();
+    });
+  }
+  const ringSettingsDoneButton = byId("ringHidSettingsDone");
+  if (ringSettingsDoneButton) {
+    ringSettingsDoneButton.addEventListener("click", () => {
+      closeRingSettings();
+    });
+  }
+
+  document.querySelectorAll(".ring-button-action-select").forEach((selectEl) => {
+    selectEl.addEventListener("change", (event) => {
+      const button = String(selectEl.dataset.ringButton || "").trim().toLowerCase();
+      if (!button || !Object.prototype.hasOwnProperty.call(RING_BUTTON_ACTION_DEFAULTS, button)) {
+        return;
+      }
+      const nextAction = String(event.target.value || "").trim().toLowerCase();
+      ringButtonActions[button] = RING_ACTION_OPTION_VALUES.has(nextAction)
+        ? nextAction
+        : RING_BUTTON_ACTION_DEFAULTS[button];
+      persistRingButtonActions();
+    });
+  });
+
   const themeToggle = byId("themeToggle");
   if (themeToggle) {
     themeToggle.addEventListener("click", () => {
       const current = document.documentElement.getAttribute("data-theme") || "dark";
       applyTheme(current === "light" ? "dark" : "light");
+    });
+  }
+
+  const aboutToggle = byId("aboutToggle");
+  if (aboutToggle) {
+    aboutToggle.addEventListener("click", () => {
+      const expanded = aboutToggle.getAttribute("aria-expanded") === "true";
+      setAboutPanelOpen(!expanded);
+    });
+  }
+
+  const aboutBackButton = byId("aboutBackButton");
+  if (aboutBackButton) {
+    aboutBackButton.addEventListener("click", () => {
+      setAboutPanelOpen(false);
     });
   }
 
@@ -1304,13 +1654,30 @@ function applyVisualSearchFilter(rawQuery) {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
-  chrome.storage.sync.get(DEFAULTS, (stored) => {
+  setPopupLoadingState(true);
+  waitForPopupAssets()
+    .then(() => {
+      popupInitAssetsReady = true;
+      tryCompletePopupInit();
+    })
+    .catch(() => {
+      popupInitAssetsReady = true;
+      tryCompletePopupInit();
+    });
+
+  chrome.storage.sync.get({ ...DEFAULTS, aqualRingButtonActions: RING_BUTTON_ACTION_DEFAULTS }, (stored) => {
     hydrateUI(stored || {});
+    decorateControlTitlesWithIcons();
+    hydrateRingButtonActions(stored ? stored.aqualRingButtonActions : null);
+    setRingSettingsOpen(false);
+    setAboutPanelOpen(false);
     bindEvents();
     restoreUiState();
     resizeAudioCanvas();
     refreshMicPermissionState();
     refreshRingHidState();
+    popupInitUiReady = true;
+    tryCompletePopupInit();
   });
 
   chrome.storage.local.get({ aqualAudioMode: null }, (localStored) => {
@@ -1347,6 +1714,9 @@ document.addEventListener("DOMContentLoaded", () => {
         input.checked = state.highContrastEnabled;
       }
       setToggleText("highContrastEnabledState", state.highContrastEnabled);
+    }
+    if (area === "sync" && changes.aqualRingButtonActions) {
+      hydrateRingButtonActions(changes.aqualRingButtonActions.newValue);
     }
   });
 

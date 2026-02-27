@@ -9,14 +9,50 @@
     <script src="popup.js" defer></script>
   </head>
   <body>
-    <main class="panel">
+    <main class="panel is-loading" id="popupPanel">
+      <section class="popup-loading-screen" id="popupLoadingScreen" role="status" aria-live="polite">
+        <div class="popup-loading-card">
+          <div class="popup-loading-spinner" aria-hidden="true"></div>
+          <div class="popup-loading-title">Loading AQual</div>
+          <div class="popup-loading-subtitle">Preparing accessibility controls.</div>
+        </div>
+      </section>
       <header class="app-header">
         <div class="app-title-group">
           <div class="app-title">AQual</div>
           <div class="app-subtitle">Visual accessibility controls</div>
         </div>
-        <button class="theme-toggle" id="themeToggle" aria-label="Toggle theme">Light</button>
+        <div class="app-header-actions">
+          <button class="theme-toggle about-toggle" id="aboutToggle" aria-expanded="false">About</button>
+          <button class="theme-toggle" id="themeToggle" aria-label="Toggle theme">Light</button>
+        </div>
       </header>
+
+      <section class="about-panel" id="aboutPanel" hidden>
+        <div class="about-card">
+          <div class="about-title">About AQual</div>
+          <div class="about-description">AQual is a browser extension that adapts webpages for clearer reading, better focus, and easier visual access.</div>
+          <div class="about-maker">Made by Shlok Gupta</div>
+          <a
+            class="about-linkedin"
+            href="https://www.linkedin.com/in/shlokg"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <img src="../assets/images/linkedin-logo.png" alt="" class="about-linkedin-logo" />
+            <span class="about-linkedin-text">linkedin.com/in/shlokg</span>
+          </a>
+          <a
+            class="about-linkedin"
+            href="https://aqual-priv.netlify.app/"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <span class="about-linkedin-text">Privacy Policy</span>
+          </a>
+        </div>
+        <button class="action-button about-back" id="aboutBackButton" type="button">Back</button>
+      </section>
 
       <div class="tab-bar">
         <button class="tab-button active" data-tab="visual">Visual</button>
@@ -80,8 +116,8 @@
 
         <div class="control">
           <div class="control-info">
-            <div class="control-title">Font color</div>
-            <div class="control-subtitle">Choose a high-contrast text color.</div>
+            <div class="control-title">Font colour</div>
+            <div class="control-subtitle">Choose a high-contrast text colour.</div>
           </div>
           <div class="control-actions column">
             <div class="palette" id="fontColorPalette"></div>
@@ -118,6 +154,47 @@
               <span class="switch-track"></span>
               <span class="switch-state" id="reducedCrowdingEnabledState">Off</span>
             </label>
+          </div>
+        </div>
+
+        <div class="control">
+          <div class="control-info">
+            <div class="control-title">Emphasise links</div>
+            <div class="control-subtitle">Add a multicolour underline.</div>
+          </div>
+          <div class="control-actions">
+            <label class="switch">
+              <input type="checkbox" id="linkEmphasisEnabled" />
+              <span class="switch-track"></span>
+              <span class="switch-state" id="linkEmphasisEnabledState">Off</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="control">
+          <div class="control-info">
+            <div class="control-title">Pointer style</div>
+            <div class="control-subtitle">Pick a larger, clearer pointer.</div>
+          </div>
+          <div class="control-actions">
+            <select id="cursorTypeSelect" class="select"></select>
+            <label class="switch">
+              <input type="checkbox" id="cursorEnabled" />
+              <span class="switch-track"></span>
+              <span class="switch-state" id="cursorEnabledState">Off</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="control">
+          <div class="control-info">
+            <div class="control-title">Reading Assist (DOCX)</div>
+            <div class="control-subtitle">Upload a DOCX and open the Reading Assist viewer.</div>
+          </div>
+          <div class="control-actions column">
+            <input class="file-input" type="file" id="docUploadInput" accept=".docx" />
+            <button class="action-button" id="docUploadButton">Upload &amp; Open</button>
+            <div class="status-text" id="docUploadStatus">Waiting for a file.</div>
           </div>
         </div>
         </details>
@@ -251,7 +328,7 @@
         </details>
 
         <details class="group" id="section-contrast">
-          <summary>Contrast &amp; Light</summary>
+          <summary>Display &amp; Colour</summary>
 
         <div class="control">
           <div class="control-info">
@@ -269,13 +346,54 @@
 
         <div class="control">
           <div class="control-info">
-            <div class="control-title">Ring button (Bluetooth)</div>
-            <div class="control-subtitle">Pair your page-turner ring. Pressing it toggles voice mic on/off. Shortcut: Alt+L starts listening after 10s, then auto-stops after 5s.</div>
+            <div class="control-title">Colour vision mode</div>
+            <div class="control-subtitle">Adjust hues for specific colour blindness.</div>
+          </div>
+          <div class="control-actions">
+            <select id="colorBlindModeSelect" class="select"></select>
+          </div>
+        </div>
+
+        <div class="control">
+          <div class="control-info">
+            <div class="control-title">AQual Ring</div>
+            <div class="control-subtitle">Pair your AQual Ring.</div>
           </div>
           <div class="control-actions column">
-            <div class="control-actions">
+            <div class="control-actions ring-quick-actions">
               <button class="action-button" id="ringHidConnect">Connect ring</button>
               <button class="action-button" id="ringHidForget">Forget</button>
+              <button class="action-button" id="ringHidSettingsToggle" type="button" aria-expanded="false">Settings</button>
+            </div>
+            <div class="ring-settings-panel" id="ringHidSettingsPanel" hidden>
+              <div class="ring-settings-header">
+                <div class="ring-settings-title">Ring Button Actions</div>
+                <button class="action-button ring-settings-done" id="ringHidSettingsDone" type="button">Save</button>
+              </div>
+              <div class="ring-settings-row">
+                <label class="ring-settings-label" for="ringButtonActionRight">Right</label>
+                <select class="select ring-button-action-select" id="ringButtonActionRight" data-ring-button="right"></select>
+              </div>
+              <div class="ring-settings-row">
+                <label class="ring-settings-label" for="ringButtonActionLeft">Left</label>
+                <select class="select ring-button-action-select" id="ringButtonActionLeft" data-ring-button="left"></select>
+              </div>
+              <div class="ring-settings-row">
+                <label class="ring-settings-label" for="ringButtonActionBottom">Bottom</label>
+                <select class="select ring-button-action-select" id="ringButtonActionBottom" data-ring-button="bottom"></select>
+              </div>
+              <div class="ring-settings-row">
+                <label class="ring-settings-label" for="ringButtonActionTop">Top</label>
+                <select class="select ring-button-action-select" id="ringButtonActionTop" data-ring-button="top"></select>
+              </div>
+              <div class="ring-settings-row">
+                <label class="ring-settings-label" for="ringButtonActionCenter">Centre</label>
+                <select class="select ring-button-action-select" id="ringButtonActionCenter" data-ring-button="center"></select>
+              </div>
+              <div class="ring-settings-row">
+                <label class="ring-settings-label" for="ringButtonActionHome">Home</label>
+                <select class="select ring-button-action-select" id="ringButtonActionHome" data-ring-button="home"></select>
+              </div>
             </div>
             <div class="status-text" id="ringHidStatus">Not connected. Press Connect and choose your ring.</div>
           </div>
@@ -346,75 +464,12 @@
         </div>
         </details>
 
-        <details class="group" id="section-color">
-          <summary>Color Vision</summary>
-        <div class="control">
-          <div class="control-info">
-            <div class="control-title">Color vision mode</div>
-            <div class="control-subtitle">Adjust hues for specific color blindness.</div>
-          </div>
-          <div class="control-actions">
-            <select id="colorBlindModeSelect" class="select"></select>
-          </div>
-        </div>
-        </details>
-
-        <details class="group" id="section-links">
-          <summary>Links</summary>
-        <div class="control">
-          <div class="control-info">
-            <div class="control-title">Emphasize links</div>
-            <div class="control-subtitle">Add a multi-color underline.</div>
-          </div>
-          <div class="control-actions">
-            <label class="switch">
-              <input type="checkbox" id="linkEmphasisEnabled" />
-              <span class="switch-track"></span>
-              <span class="switch-state" id="linkEmphasisEnabledState">Off</span>
-            </label>
-          </div>
-        </div>
-        </details>
-
-        <details class="group" id="section-pointer">
-          <summary>Pointer</summary>
-        <div class="control">
-          <div class="control-info">
-            <div class="control-title">Cursor style</div>
-            <div class="control-subtitle">Pick a larger, clearer pointer.</div>
-          </div>
-          <div class="control-actions">
-            <select id="cursorTypeSelect" class="select"></select>
-            <label class="switch">
-              <input type="checkbox" id="cursorEnabled" />
-              <span class="switch-track"></span>
-              <span class="switch-state" id="cursorEnabledState">Off</span>
-            </label>
-          </div>
-        </div>
-        </details>
-
-        <details class="group" id="section-docs">
-          <summary>Documents</summary>
-          <div class="control">
-            <div class="control-info">
-              <div class="control-title">Reading Assist (DOCX)</div>
-              <div class="control-subtitle">Upload a DOCX and open the Reading Assist viewer.</div>
-            </div>
-            <div class="control-actions column">
-              <input class="file-input" type="file" id="docUploadInput" accept=".docx" />
-              <button class="action-button" id="docUploadButton">Upload &amp; Open</button>
-              <div class="status-text" id="docUploadStatus">Waiting for a file.</div>
-            </div>
-          </div>
-        </details>
-
         <details class="group" id="section-utilities">
           <summary>Utilities</summary>
         <div class="control">
           <div class="control-info">
             <div class="control-title">Print page</div>
-            <div class="control-subtitle">Open the print dialog for this page.</div>
+            <div class="control-subtitle">Open the print dialogue for this page.</div>
           </div>
           <div class="control-actions">
             <button class="action-button" id="printPage">Print</button>
