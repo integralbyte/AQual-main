@@ -33,6 +33,16 @@ PREFERRED_RING_NAME_TOKENS = ("yiser", "ring", "page", "turn")
 PREFERRED_RING_VID_PID = (0x05AC, 0x022C)
 YISER_J6_DEFAULT_BUTTON_INDEX = 1
 YISER_J6_DEFAULT_PRESS_VALUE = 3
+YISER_J6_HIGH_CONTRAST_VALUES = (1, 2)
+YISER_J6_DIRECTIONAL_ACTIVE_VALUE = 3
+YISER_J6_DIRECTIONAL_IDLE_VALUE = 0
+YISER_J6_DIRECTIONAL_MIN_DELTA = 80
+YISER_J6_DIRECTIONAL_ACTION_BY_BUTTON = {
+    "left": "toggle_line_guide",
+    "right": "toggle_image_veil",
+    "top": "toggle_reduced_crowding",
+    "bottom": "toggle_font_color",
+}
 NON_RING_NAME_TOKENS = ("keyboard", "trackpad", "touchpad", "mouse", "apple internal")
 
 
@@ -162,15 +172,68 @@ def _is_os_protected_hid_profile(info):
 
 
 def _matches_yiser_j6_frame_signature(report_norm):
-    if len(report_norm) < 6:
-        return False
-    return (
+    if len(report_norm) >= 6 and (
         report_norm[0] == 1
         and report_norm[2] == 220
         and report_norm[3] == 0
         and report_norm[4] == 44
         and report_norm[5] == 1
-    )
+    ):
+        return True
+    if len(report_norm) >= 2 and report_norm[0] == 5:
+        return True
+    return False
+
+
+def _extract_yiser_button_value(report_norm):
+    if not report_norm:
+        return None
+    if len(report_norm) >= 2 and report_norm[0] == 5:
+        return int(report_norm[1]) & 0xFF
+    if len(report_norm) >= 6 and (
+        report_norm[0] == 1
+        and report_norm[2] == 220
+        and report_norm[3] == 0
+        and report_norm[4] == 44
+        and report_norm[5] == 1
+    ):
+        return int(report_norm[1]) & 0xFF
+    return None
+
+
+def _extract_yiser_directional_axes(report_norm):
+    if not report_norm or len(report_norm) < 6:
+        return None
+    if int(report_norm[0]) != 1:
+        return None
+    state_value = int(report_norm[1]) & 0xFF
+    if state_value not in (YISER_J6_DIRECTIONAL_ACTIVE_VALUE, YISER_J6_DIRECTIONAL_IDLE_VALUE):
+        return None
+    x_axis = (int(report_norm[2]) & 0xFF) | ((int(report_norm[3]) & 0xFF) << 8)
+    y_axis = (int(report_norm[4]) & 0xFF) | ((int(report_norm[5]) & 0xFF) << 8)
+    return {
+        "pressed": state_value == YISER_J6_DIRECTIONAL_ACTIVE_VALUE,
+        "x": int(x_axis),
+        "y": int(y_axis),
+    }
+
+
+def _classify_yiser_direction_button(delta_x, delta_y):
+    abs_x = abs(int(delta_x))
+    abs_y = abs(int(delta_y))
+    if max(abs_x, abs_y) < YISER_J6_DIRECTIONAL_MIN_DELTA:
+        return None
+    if abs_x >= abs_y:
+        # This ring reports right as a negative X sweep and left as a positive X sweep.
+        return "right" if int(delta_x) < 0 else "left"
+    # This ring reports bottom as a negative Y sweep and top as a positive Y sweep.
+    return "bottom" if int(delta_y) < 0 else "top"
+
+
+def _action_for_directional_button(button_label):
+    if not button_label:
+        return None
+    return YISER_J6_DIRECTIONAL_ACTION_BY_BUTTON.get(str(button_label).strip().lower())
 
 
 def _enumerate_candidates(args):
@@ -246,16 +309,19 @@ def _rank_candidates(args):
     return ranked
 
 
-def _push_ring_event(client, endpoint, device_info, report, verbose=False):
+def _push_ring_event(client, endpoint, device_info, report, action, button_label=None, verbose=False):
     payload = {
         "source": "native-ring-monitor",
         "vendorId": int(device_info.get("vendor_id") or 0),
         "productId": int(device_info.get("product_id") or 0),
         "usagePage": int(device_info.get("usage_page") or 0),
         "usage": int(device_info.get("usage") or 0),
+        "action": str(action or "toggle_voice_mic"),
         "reportPreview": report[:12],
         "timestamp": time.time(),
     }
+    if button_label:
+        payload["buttonLabel"] = str(button_label)
     response = client.post(endpoint, json=payload, timeout=3.0)
     response.raise_for_status()
     if verbose:
@@ -340,7 +406,9 @@ def _monitor_device(args, device_info):
     if use_strict_yiser_profile:
         print(
             "[ring-monitor] strict button filter active: "
-            f"byte_index={args.target_byte_index} press_value={args.yiser_press_value}"
+            f"byte_index={args.target_byte_index} press_value={args.yiser_press_value} "
+            f"high_contrast_values={list(YISER_J6_HIGH_CONTRAST_VALUES)} "
+            f"directional_actions={YISER_J6_DIRECTIONAL_ACTION_BY_BUTTON}"
         )
 
     last_report = None
@@ -349,6 +417,16 @@ def _monitor_device(args, device_info):
     press_active = False
     press_started_ms = 0.0
     hold_reported = False
+    directional_active = False
+    directional_start_x = 0
+    directional_start_y = 0
+    directional_last_x = 0
+    directional_last_y = 0
+    directional_min_x = 0
+    directional_max_x = 0
+    directional_min_y = 0
+    directional_max_y = 0
+    directional_frame_count = 0
 
     try:
         while not STOP:
@@ -369,12 +447,6 @@ def _monitor_device(args, device_info):
                 continue
 
             report_norm = tuple(int(byte) & 0xFF for byte in report)
-            if use_strict_yiser_profile and not _matches_yiser_j6_frame_signature(report_norm):
-                if args.verbose:
-                    print(f"[ring-monitor] ignored non-target frame={json.dumps(list(report_norm)[:16])}")
-                last_report = report_norm
-                continue
-
             if last_report is None:
                 last_report = report_norm
                 if args.verbose:
@@ -387,29 +459,153 @@ def _monitor_device(args, device_info):
             rising_edge_indexes = []
             falling_edge_indexes = []
             changed = 0
+            action = "toggle_voice_mic"
+            button_label = None
+            unknown_button_value = None
+            directional_emit = False
 
             if use_strict_yiser_profile:
-                idx = max(0, int(args.target_byte_index))
-                if idx >= len(last_report) or idx >= len(report_norm):
-                    last_report = report_norm
-                    continue
-                prev_value = int(last_report[idx]) & 0xFF
-                curr_value = int(report_norm[idx]) & 0xFF
-                if prev_value != curr_value:
-                    changed = 1
-                if prev_value == 0 and curr_value == int(args.yiser_press_value):
-                    rising_edge_indexes.append(idx)
-                if prev_value == int(args.yiser_press_value) and curr_value == 0:
-                    falling_edge_indexes.append(idx)
-                # Ignore unrelated state changes (e.g., other ring buttons).
-                if changed and not rising_edge_indexes and not falling_edge_indexes:
-                    if args.verbose:
-                        print(
-                            "[ring-monitor] ignored transition "
-                            f"byte[{idx}] {prev_value}->{curr_value} (not target press/release)"
-                        )
-                    last_report = report_norm
-                    continue
+                prev_value = _extract_yiser_button_value(last_report)
+                curr_value = _extract_yiser_button_value(report_norm)
+
+                if curr_value is None:
+                    prev_directional = _extract_yiser_directional_axes(last_report)
+                    curr_directional = _extract_yiser_directional_axes(report_norm)
+                    if curr_directional is None:
+                        if directional_active:
+                            directional_active = False
+                            directional_frame_count = 0
+                            if args.verbose:
+                                print(
+                                    "[ring-monitor] directional gesture reset due to "
+                                    f"unexpected frame={json.dumps(list(report_norm)[:16])}"
+                                )
+                        elif args.verbose:
+                            print(f"[ring-monitor] ignored non-target frame={json.dumps(list(report_norm)[:16])}")
+                        last_report = report_norm
+                        continue
+
+                    prev_pressed = bool(prev_directional and prev_directional.get("pressed"))
+                    curr_pressed = bool(curr_directional.get("pressed"))
+                    prev_x = int(prev_directional.get("x")) if prev_directional else int(curr_directional.get("x"))
+                    prev_y = int(prev_directional.get("y")) if prev_directional else int(curr_directional.get("y"))
+                    curr_x = int(curr_directional.get("x"))
+                    curr_y = int(curr_directional.get("y"))
+                    if prev_pressed != curr_pressed or prev_x != curr_x or prev_y != curr_y:
+                        changed = 1
+
+                    if not prev_pressed and curr_pressed:
+                        directional_active = True
+                        directional_start_x = curr_x
+                        directional_start_y = curr_y
+                        directional_last_x = curr_x
+                        directional_last_y = curr_y
+                        directional_min_x = curr_x
+                        directional_max_x = curr_x
+                        directional_min_y = curr_y
+                        directional_max_y = curr_y
+                        directional_frame_count = 1
+                        if args.verbose:
+                            print(
+                                f"[ring-monitor] directional gesture start x={curr_x} y={curr_y} "
+                                f"report={json.dumps(list(report_norm)[:16])}"
+                            )
+                        last_report = report_norm
+                        continue
+
+                    if curr_pressed:
+                        if not directional_active:
+                            directional_active = True
+                            directional_start_x = prev_x
+                            directional_start_y = prev_y
+                            directional_min_x = min(prev_x, curr_x)
+                            directional_max_x = max(prev_x, curr_x)
+                            directional_min_y = min(prev_y, curr_y)
+                            directional_max_y = max(prev_y, curr_y)
+                            directional_frame_count = 0
+                        directional_last_x = curr_x
+                        directional_last_y = curr_y
+                        directional_min_x = min(directional_min_x, curr_x)
+                        directional_max_x = max(directional_max_x, curr_x)
+                        directional_min_y = min(directional_min_y, curr_y)
+                        directional_max_y = max(directional_max_y, curr_y)
+                        directional_frame_count += 1
+                        last_report = report_norm
+                        continue
+
+                    if prev_pressed and directional_active:
+                        directional_last_x = curr_x
+                        directional_last_y = curr_y
+                        directional_min_x = min(directional_min_x, curr_x)
+                        directional_max_x = max(directional_max_x, curr_x)
+                        directional_min_y = min(directional_min_y, curr_y)
+                        directional_max_y = max(directional_max_y, curr_y)
+                        directional_frame_count += 1
+                        delta_x = int(directional_last_x - directional_start_x)
+                        delta_y = int(directional_last_y - directional_start_y)
+                        button_label = _classify_yiser_direction_button(delta_x, delta_y)
+                        directional_active = False
+                        if button_label:
+                            action = _action_for_directional_button(button_label)
+                            if action:
+                                directional_emit = True
+                                print(
+                                    f"[ring-monitor] directional button={button_label} "
+                                    f"dx={delta_x} dy={delta_y} span_x={int(directional_max_x - directional_min_x)} "
+                                    f"span_y={int(directional_max_y - directional_min_y)} frames={directional_frame_count} "
+                                    f"action={action}"
+                                )
+                            else:
+                                print(
+                                    "[ring-monitor] unknown directional key press "
+                                    f"button={button_label} dx={delta_x} dy={delta_y} frames={directional_frame_count} "
+                                    f"report={json.dumps(list(report_norm)[:16])}"
+                                )
+                        else:
+                            print(
+                                "[ring-monitor] unknown directional key press "
+                                f"dx={delta_x} dy={delta_y} frames={directional_frame_count} "
+                                f"report={json.dumps(list(report_norm)[:16])}"
+                            )
+                        directional_frame_count = 0
+                    else:
+                        last_report = report_norm
+                        continue
+                else:
+                    if directional_active:
+                        directional_active = False
+                        directional_frame_count = 0
+
+                if curr_value is not None:
+                    if prev_value is None:
+                        prev_value = 0
+
+                    if prev_value != curr_value:
+                        changed = 1
+
+                    if prev_value == 0 and curr_value != 0:
+                        rising_edge_indexes.append(int(args.target_byte_index))
+                        if curr_value == int(args.yiser_press_value):
+                            action = "toggle_voice_mic"
+                            button_label = "center"
+                        elif curr_value in YISER_J6_HIGH_CONTRAST_VALUES:
+                            action = "toggle_high_contrast"
+                            button_label = "home"
+                        else:
+                            action = None
+                            unknown_button_value = int(curr_value)
+                    if prev_value != 0 and curr_value == 0:
+                        falling_edge_indexes.append(int(args.target_byte_index))
+
+                    if changed and not rising_edge_indexes and not falling_edge_indexes:
+                        if args.verbose:
+                            print(
+                                "[ring-monitor] ignored transition "
+                                f"byte[{int(args.target_byte_index)}] {prev_value}->{curr_value} "
+                                "(not target press/release)"
+                            )
+                        last_report = report_norm
+                        continue
             else:
                 for i in range(min(len(last_report), len(report_norm))):
                     if last_report[i] != report_norm[i]:
@@ -433,13 +629,29 @@ def _monitor_device(args, device_info):
             # If there is no explicit 0->nonzero edge, fall back to "any change"
             # so devices with non-binary reports still work.
             should_emit = False
-            if rising_edge:
-                if press_armed:
+            if use_strict_yiser_profile:
+                if directional_emit:
                     should_emit = True
+                    press_armed = True
+                elif rising_edge and press_armed:
                     press_armed = False
-            elif changed > 0 and not falling_edge:
-                # Fallback mode for unusual reports that don't expose clean edges.
-                should_emit = True
+                    if action:
+                        should_emit = True
+                    elif unknown_button_value is not None:
+                        print(
+                            "[ring-monitor] unknown key press "
+                            f"value={unknown_button_value} known_mic={int(args.yiser_press_value)} "
+                            f"known_high_contrast={list(YISER_J6_HIGH_CONTRAST_VALUES)} "
+                            f"report={json.dumps(list(report_norm)[:16])}"
+                        )
+            else:
+                if rising_edge:
+                    if press_armed:
+                        should_emit = True
+                        press_armed = False
+                elif changed > 0 and not falling_edge:
+                    # Fallback mode for unusual reports that don't expose clean edges.
+                    should_emit = True
 
             if falling_edge:
                 press_armed = True
@@ -466,9 +678,14 @@ def _monitor_device(args, device_info):
                         endpoint,
                         device_info=device_info,
                         report=report,
+                        action=action,
+                        button_label=button_label,
                         verbose=args.verbose,
                     )
-                    print("[ring-monitor] ring press detected")
+                    if button_label:
+                        print(f"[ring-monitor] ring press detected action={action} button={button_label}")
+                    else:
+                        print(f"[ring-monitor] ring press detected action={action}")
                     last_press_ms = now_ms
                 except Exception as push_error:
                     print(f"[ring-monitor] failed to push event: {push_error}", file=sys.stderr)
