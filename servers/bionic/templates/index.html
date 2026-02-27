@@ -802,7 +802,7 @@
             </div>
             <div class="toolbar-center">
                 <div class="mode-toggle">
-                    <button class="mode-btn active" data-mode="summarize">Summarize</button>
+                    <button class="mode-btn active" data-mode="summarize">Summarise</button>
                     <button class="mode-btn" data-mode="rephrase">Rephrase</button>
                 </div>
                 <span class="style-indicator" id="styleIndicator">No style set</span>
@@ -986,7 +986,7 @@
                 if (data.error) {
                     para.classList.remove('loading');
                     para.innerHTML = originalHtml;
-                    console.error('Summarize error:', data.error);
+                    console.error('Summarise error:', data.error);
                     return;
                 }
 
@@ -1023,7 +1023,7 @@
             } catch (err) {
                 para.classList.remove('loading');
                 para.innerHTML = originalHtml;
-                console.error('Summarize failed:', err);
+                console.error('Summarise failed:', err);
             }
         }
 
