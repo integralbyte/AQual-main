@@ -22,6 +22,7 @@ from collections import deque
 import httpx
 from google import genai
 from google.genai import types
+from lxml import html as lxml_html
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
@@ -34,6 +35,7 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 app.logger.setLevel("INFO")
 SUPPRESS_RING_POLL_REQUEST_LOGS = str(get_env("SUPPRESS_RING_POLL_REQUEST_LOGS", "1")).strip().lower() not in ("0", "false", "no", "off")
 RING_POLL_DEBUG = str(get_env("RING_POLL_DEBUG", "0")).strip().lower() in ("1", "true", "yes", "on")
+READING_MODE_DEBUG = str(get_env("READING_MODE_DEBUG", "1")).strip().lower() in ("1", "true", "yes", "on")
 
 
 class _SuppressRingPollAccessLogs(logging.Filter):
@@ -54,6 +56,12 @@ if SUPPRESS_RING_POLL_REQUEST_LOGS:
 GEMINI_API_KEY = get_env("GEMINI_API_KEY", "")
 GEMINI_MODEL = "gemini-3-flash-preview"
 GEMINI_THINKING_LEVEL = "LOW"
+GEMINI_READING_MODE_MODEL = str(get_env("GEMINI_READING_MODE_MODEL", "")).strip() or "gemini-3-flash-preview"
+GEMINI_READING_MODE_THINKING_LEVEL = str(get_env("GEMINI_READING_MODE_THINKING_LEVEL", "HIGH")).strip().upper() or "HIGH"
+if GEMINI_READING_MODE_THINKING_LEVEL not in ("LOW", "MEDIUM", "HIGH"):
+    GEMINI_READING_MODE_THINKING_LEVEL = "HIGH"
+GEMINI_READING_MODE_USE_THINKING = str(get_env("GEMINI_READING_MODE_USE_THINKING", "0")).strip().lower() in ("1", "true", "yes", "on")
+GEMINI_READING_MODE_ENABLE_AI_REFINEMENT = str(get_env("GEMINI_READING_MODE_ENABLE_AI_REFINEMENT", "0")).strip().lower() in ("1", "true", "yes", "on")
 GEMINI_LIVE_MODEL = str(get_env("GEMINI_LIVE_MODEL", "")).strip() or "gemini-2.5-flash-native-audio-preview-12-2025"
 GEMINI_LIVE_MODEL_FALLBACKS = [
     str(get_env("GEMINI_LIVE_FALLBACK_MODEL_1", "")).strip() or "gemini-2.5-flash-native-audio-preview-09-2025",
@@ -93,6 +101,12 @@ def _get_env_float(name: str, default: float, minimum=None, maximum=None) -> flo
 GEMINI_LIVE_THINKING_BUDGET = _get_env_int("GEMINI_LIVE_THINKING_BUDGET", 0, minimum=0, maximum=32768)
 GEMINI_LIVE_MAX_OUTPUT_TOKENS = _get_env_int("GEMINI_LIVE_MAX_OUTPUT_TOKENS", 160, minimum=32, maximum=2048)
 GEMINI_LIVE_TEMPERATURE = _get_env_float("GEMINI_LIVE_TEMPERATURE", 0.1, minimum=0.0, maximum=2.0)
+GEMINI_READING_MODE_HTML_CHAR_LIMIT = _get_env_int("GEMINI_READING_MODE_HTML_CHAR_LIMIT", 450000, minimum=20000, maximum=1200000)
+GEMINI_READING_MODE_MAX_OUTPUT_TOKENS = _get_env_int("GEMINI_READING_MODE_MAX_OUTPUT_TOKENS", 900, minimum=128, maximum=4096)
+READING_MODE_DISABLE_SELECTOR_CAP = str(get_env("READING_MODE_DISABLE_SELECTOR_CAP", "0")).strip().lower() in ("1", "true", "yes", "on")
+READING_MODE_URL_CACHE_ENABLED = str(get_env("READING_MODE_URL_CACHE_ENABLED", "1")).strip().lower() in ("1", "true", "yes", "on")
+READING_MODE_URL_CACHE_MAX_ENTRIES = _get_env_int("READING_MODE_URL_CACHE_MAX_ENTRIES", 5000, minimum=100, maximum=50000)
+READING_MODE_URL_CACHE_FILE = PROJECT_ROOT / ".run" / "reading_mode_url_cache.json"
 
 
 def get_gemini_client():
@@ -114,6 +128,20 @@ ring_event_lock = Lock()
 ring_event_counter = 0
 ring_event_last_ts = 0.0
 ring_event_history = deque(maxlen=500)
+READING_MODE_PLAN_CACHE_TTL_SECONDS = 90.0
+READING_MODE_PLAN_CACHE_MAX_ENTRIES = 120
+if READING_MODE_DISABLE_SELECTOR_CAP:
+    READING_MODE_MAX_INCLUDE_SELECTORS = 0
+    READING_MODE_MAX_EXCLUDE_SELECTORS = 0
+else:
+    READING_MODE_MAX_INCLUDE_SELECTORS = _get_env_int("READING_MODE_MAX_INCLUDE_SELECTORS", 8, minimum=1, maximum=32)
+    READING_MODE_MAX_EXCLUDE_SELECTORS = _get_env_int("READING_MODE_MAX_EXCLUDE_SELECTORS", 140, minimum=1, maximum=1000)
+READING_MODE_PLAN_CACHE_VERSION = "2026-02-27-v5"
+reading_mode_plan_cache = {}
+reading_mode_plan_cache_lock = Lock()
+reading_mode_url_cache = {}
+reading_mode_url_cache_loaded = False
+reading_mode_url_cache_lock = Lock()
 
 
 def _set_cors_headers(response):
@@ -135,6 +163,13 @@ def add_cors_headers(response):
 def _log_gemini_event(event: str, **fields):
     payload = {"event": event, **fields}
     app.logger.info("[gemini] %s", json.dumps(payload, ensure_ascii=True, separators=(",", ":")))
+
+
+def _log_reading_mode_event(event: str, **fields):
+    if not READING_MODE_DEBUG:
+        return
+    payload = {"event": event, **fields}
+    app.logger.info("[reading-mode] %s", json.dumps(payload, ensure_ascii=True, separators=(",", ":")))
 
 
 def _log_tts_event(event: str, **fields):
@@ -261,6 +296,166 @@ def _set_live_session_handle(conversation_id: str, handle: str):
         }
 
 
+def _prune_reading_mode_plan_cache(now_ts: float):
+    stale_keys = [
+        cache_key
+        for cache_key, entry in reading_mode_plan_cache.items()
+        if now_ts - float(entry.get("updated_at", 0.0)) > READING_MODE_PLAN_CACHE_TTL_SECONDS
+    ]
+    for cache_key in stale_keys:
+        reading_mode_plan_cache.pop(cache_key, None)
+
+    while len(reading_mode_plan_cache) > READING_MODE_PLAN_CACHE_MAX_ENTRIES:
+        oldest_key = min(
+            reading_mode_plan_cache,
+            key=lambda cache_key: float(reading_mode_plan_cache[cache_key].get("updated_at", 0.0)),
+        )
+        reading_mode_plan_cache.pop(oldest_key, None)
+
+
+def _get_cached_reading_mode_plan(cache_key: str):
+    token = str(cache_key or "").strip()
+    if not token:
+        return None
+    now_ts = time.time()
+    with reading_mode_plan_cache_lock:
+        _prune_reading_mode_plan_cache(now_ts)
+        entry = reading_mode_plan_cache.get(token)
+        if not entry:
+            return None
+        payload = dict(entry.get("payload") or {})
+        if str(payload.get("planVersion") or "") != READING_MODE_PLAN_CACHE_VERSION:
+            return None
+        return payload
+
+
+def _set_cached_reading_mode_plan(cache_key: str, payload: dict):
+    token = str(cache_key or "").strip()
+    if not token or not isinstance(payload, dict):
+        return
+    now_ts = time.time()
+    with reading_mode_plan_cache_lock:
+        _prune_reading_mode_plan_cache(now_ts)
+        reading_mode_plan_cache[token] = {
+            "payload": dict(payload),
+            "updated_at": now_ts,
+        }
+
+
+def _normalize_reading_mode_cache_url(page_url: str) -> str:
+    raw = str(page_url or "").strip()
+    if not raw:
+        return ""
+    try:
+        parsed = urllib.parse.urlsplit(raw)
+    except Exception:
+        return raw[:2000]
+    scheme = str(parsed.scheme or "").lower()
+    if scheme not in ("http", "https"):
+        return ""
+    host = str(parsed.netloc or "").lower()
+    path = str(parsed.path or "/")
+    query = str(parsed.query or "")
+    normalized = urllib.parse.urlunsplit((scheme, host, path, query, ""))
+    return normalized[:2000]
+
+
+def _prune_reading_mode_url_cache_locked():
+    while len(reading_mode_url_cache) > READING_MODE_URL_CACHE_MAX_ENTRIES:
+        oldest_key = min(
+            reading_mode_url_cache,
+            key=lambda cache_key: float(reading_mode_url_cache[cache_key].get("updated_at", 0.0)),
+        )
+        reading_mode_url_cache.pop(oldest_key, None)
+
+
+def _load_reading_mode_url_cache_locked():
+    global reading_mode_url_cache_loaded
+    if reading_mode_url_cache_loaded:
+        return
+    reading_mode_url_cache_loaded = True
+
+    path = READING_MODE_URL_CACHE_FILE
+    if not path.exists():
+        return
+    try:
+        payload = json.loads(path.read_text("utf-8"))
+    except Exception:
+        return
+    if not isinstance(payload, dict):
+        return
+
+    reading_mode_url_cache.clear()
+    for key, value in payload.items():
+        cache_url = _normalize_reading_mode_cache_url(key)
+        if not cache_url or not isinstance(value, dict):
+            continue
+        cached_payload = value.get("payload")
+        if not isinstance(cached_payload, dict):
+            continue
+        updated_at = float(value.get("updated_at", 0.0) or 0.0)
+        reading_mode_url_cache[cache_url] = {
+            "payload": dict(cached_payload),
+            "updated_at": updated_at or time.time(),
+        }
+    _prune_reading_mode_url_cache_locked()
+
+
+def _persist_reading_mode_url_cache_locked():
+    try:
+        READING_MODE_URL_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            key: {
+                "payload": value.get("payload") if isinstance(value, dict) else {},
+                "updated_at": float(value.get("updated_at", 0.0) or 0.0) if isinstance(value, dict) else 0.0,
+            }
+            for key, value in reading_mode_url_cache.items()
+        }
+        READING_MODE_URL_CACHE_FILE.write_text(
+            json.dumps(payload, ensure_ascii=True, separators=(",", ":")),
+            encoding="utf-8",
+        )
+    except Exception:
+        # URL cache persistence is best-effort.
+        return
+
+
+def _get_cached_reading_mode_plan_by_url(page_url: str):
+    if not READING_MODE_URL_CACHE_ENABLED:
+        return None
+    cache_url = _normalize_reading_mode_cache_url(page_url)
+    if not cache_url:
+        return None
+    with reading_mode_url_cache_lock:
+        _load_reading_mode_url_cache_locked()
+        entry = reading_mode_url_cache.get(cache_url)
+        if not isinstance(entry, dict):
+            return None
+        payload = entry.get("payload")
+        if not isinstance(payload, dict) or not payload:
+            return None
+        if str(payload.get("planVersion") or "") != READING_MODE_PLAN_CACHE_VERSION:
+            return None
+        entry["updated_at"] = time.time()
+        return dict(payload)
+
+
+def _set_cached_reading_mode_plan_by_url(page_url: str, payload: dict):
+    if not READING_MODE_URL_CACHE_ENABLED:
+        return
+    cache_url = _normalize_reading_mode_cache_url(page_url)
+    if not cache_url or not isinstance(payload, dict) or not payload:
+        return
+    with reading_mode_url_cache_lock:
+        _load_reading_mode_url_cache_locked()
+        reading_mode_url_cache[cache_url] = {
+            "payload": dict(payload),
+            "updated_at": time.time(),
+        }
+        _prune_reading_mode_url_cache_locked()
+        _persist_reading_mode_url_cache_locked()
+
+
 def _clean_ai_json_text(response_text: str) -> str:
     response_text = (response_text or "").strip()
     if response_text.startswith("```"):
@@ -271,6 +466,596 @@ def _clean_ai_json_text(response_text: str) -> str:
             lines = lines[:-1]
         response_text = "\n".join(lines).strip()
     return response_text
+
+
+def _extract_first_json_object_text(response_text: str) -> str:
+    text = str(response_text or "")
+    start = text.find("{")
+    if start < 0:
+        return ""
+
+    depth = 0
+    in_string = False
+    escape = False
+    for index in range(start, len(text)):
+        ch = text[index]
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == "\"":
+                in_string = False
+            continue
+        if ch == "\"":
+            in_string = True
+            continue
+        if ch == "{":
+            depth += 1
+            continue
+        if ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:index + 1]
+    return ""
+
+
+def _normalize_selector_list(raw_value, *, max_items: int):
+    values = raw_value if isinstance(raw_value, (list, tuple)) else []
+    normalized = []
+    seen = set()
+    cap_enabled = isinstance(max_items, int) and max_items > 0
+    for item in values:
+        token = str(item or "").strip()
+        if not token:
+            continue
+        if len(token) > 220:
+            continue
+        lowered = token.lower()
+        if lowered in ("*", "html", "body", ":root"):
+            continue
+        if any(fragment in lowered for fragment in ("script", "<", ">", "javascript:", "\n", "\r")):
+            continue
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        normalized.append(token)
+        if cap_enabled and len(normalized) >= max_items:
+            break
+    return normalized
+
+
+def _is_aggressive_exclude_selector(selector: str) -> bool:
+    token = str(selector or "").strip().lower()
+    if not token:
+        return True
+
+    # Extremely broad primitives that can wipe most readable content.
+    broad_primitives = {
+        "div", "section", "article", "main", "span", "p", "a",
+        "ul", "ol", "li", "table", "figure", "img", "video",
+        "h1", "h2", "h3", "h4", "h5", "h6",
+    }
+    if token in broad_primitives:
+        return True
+    if token in ("*", "body *", "main *", "article *", "[role='main'] *", "[role=\"main\"] *"):
+        return True
+    if token.startswith("*"):
+        return True
+    if any(fragment in token for fragment in (":not(", ":has(", ":is(", ":where(")):
+        return True
+
+    # If selector lacks any targeting structure and no noise hint, it is usually too broad.
+    has_structure = any(fragment in token for fragment in ("#", ".", "[", " ", ">", "+", "~", ":"))
+    has_noise_hint = any(
+        hint in token
+        for hint in (
+            "ad", "promo", "related", "recommend", "tag", "chip",
+            "newsletter", "share", "social", "cookie", "consent",
+            "sponsor", "sidebar", "rail", "card",
+        )
+    )
+    if not has_structure and not has_noise_hint:
+        return True
+    return False
+
+
+def _normalize_ai_exclude_selector_list(raw_value, *, max_items: int):
+    double_cap = max_items * 2 if isinstance(max_items, int) and max_items > 0 else 0
+    normalized = _normalize_selector_list(raw_value, max_items=double_cap)
+    filtered = []
+    seen = set()
+    cap_enabled = isinstance(max_items, int) and max_items > 0
+    for selector in normalized:
+        lowered = str(selector or "").strip().lower()
+        if not lowered or lowered in seen:
+            continue
+        seen.add(lowered)
+        if _is_aggressive_exclude_selector(selector):
+            continue
+        filtered.append(selector)
+        if cap_enabled and len(filtered) >= max_items:
+            break
+    return filtered
+
+
+READING_MODE_POSITIVE_HINTS = (
+    "article",
+    "story",
+    "content",
+    "main",
+    "post",
+    "entry",
+    "body",
+    "text",
+    "headline",
+    "copy",
+)
+
+READING_MODE_NEGATIVE_HINTS = (
+    "nav",
+    "menu",
+    "header",
+    "footer",
+    "cookie",
+    "consent",
+    "banner",
+    "promo",
+    "advert",
+    "sponsor",
+    "related",
+    "recommend",
+    "newsletter",
+    "share",
+    "social",
+    "comment",
+    "toolbar",
+    "sidebar",
+    "rail",
+    "outbrain",
+    "taboola",
+    "most-read",
+    "breaking-news",
+    "topic",
+    "topics",
+    "tag",
+    "tags",
+    "keyword",
+    "keywords",
+    "taxonomy",
+    "chip",
+    "chips",
+    "cluster",
+    "meta",
+    "metadata",
+    "topic-list",
+    "topiclist",
+    "tag-list",
+    "tags-list",
+    "read-more",
+    "most-read",
+    "most-popular",
+    "you-may-like",
+    "recommended",
+    "suggested",
+    "inline-promo",
+)
+
+READING_MODE_BASELINE_EXCLUDE_SELECTORS = (
+    "nav",
+    "header",
+    "footer",
+    "aside",
+    "[aria-label*='advert' i]",
+    "[class*='ad-' i]",
+    "[id*='ad-' i]",
+    "[class*='advert' i]",
+    "[id*='advert' i]",
+    "[class*='cookie' i]",
+    "[id*='cookie' i]",
+    "[class*='consent' i]",
+    "[id*='consent' i]",
+    "[class*='newsletter' i]",
+    "[id*='newsletter' i]",
+    "[class*='related' i]",
+    "[id*='related' i]",
+    "[class*='recommend' i]",
+    "[id*='recommend' i]",
+    "[class*='share' i]",
+    "[id*='share' i]",
+    "[class*='social' i]",
+    "[id*='social' i]",
+    "[class*='topic' i]",
+    "[id*='topic' i]",
+    "[class*='topic-list' i]",
+    "[id*='topic-list' i]",
+    "[class*='topiclist' i]",
+    "[id*='topiclist' i]",
+    "[class*='tag' i]",
+    "[id*='tag' i]",
+    "[class*='tag-list' i]",
+    "[id*='tag-list' i]",
+    "[class*='tags-list' i]",
+    "[id*='tags-list' i]",
+    "[class*='keyword' i]",
+    "[id*='keyword' i]",
+    "[class*='taxonomy' i]",
+    "[id*='taxonomy' i]",
+    "[class*='chip' i]",
+    "[id*='chip' i]",
+    "[class*='cluster' i]",
+    "[id*='cluster' i]",
+    "[class*='clusteritems' i]",
+    "[id*='clusteritems' i]",
+    "[class*='cluster-items' i]",
+    "[id*='cluster-items' i]",
+    "[class*='card' i]",
+    "[id*='card' i]",
+    "[class*='promo' i]",
+    "[id*='promo' i]",
+    "[class*='read-more' i]",
+    "[id*='read-more' i]",
+    "[class*='most-read' i]",
+    "[id*='most-read' i]",
+    "[class*='most-popular' i]",
+    "[id*='most-popular' i]",
+    "[data-component*='topic' i]",
+    "[data-component*='tag' i]",
+    "[data-component*='related' i]",
+    "[data-component*='promo' i]",
+    "[data-testid*='topic' i]",
+    "[data-testid*='tag' i]",
+    "[data-testid*='related' i]",
+    "[aria-label*='topic' i]",
+    "[aria-label*='tag' i]",
+    "[href*='/news/topics/' i]",
+    "[href*='/topics/' i]",
+    "[href*='/tags/' i]",
+)
+
+READING_MODE_CLUTTER_PRIORITY_HINTS = (
+    "topic",
+    "tag",
+    "taxonomy",
+    "keyword",
+    "chip",
+    "cluster",
+    "related",
+    "recommend",
+    "promo",
+    "card",
+    "newsletter",
+    "share",
+    "social",
+    "comment",
+    "sponsor",
+    "advert",
+    "sidebar",
+    "rail",
+    "toolbar",
+    "read-more",
+    "most-read",
+    "most-popular",
+    "suggested",
+    "you-may-like",
+)
+
+
+def _exclude_selector_priority(selector: str) -> int:
+    token = str(selector or "").strip().lower()
+    if not token:
+        return -9999
+
+    score = 0
+    if any(hint in token for hint in ("topic", "tag", "taxonomy", "keyword", "chip", "cluster")):
+        score += 2000
+    if any(hint in token for hint in ("related", "recommend", "promo", "card", "read-more", "most-read", "most-popular", "suggested", "you-may-like")):
+        score += 1600
+    if any(hint in token for hint in ("share", "social", "comment", "newsletter")):
+        score += 1300
+    if any(hint in token for hint in ("advert", "sponsor", "outbrain", "taboola")) or "ad-" in token:
+        score += 1100
+    if any(hint in token for hint in ("sidebar", "rail", "toolbar")):
+        score += 900
+    if any(hint in token for hint in ("nav", "menu", "header", "footer")):
+        score += 500
+    if token.startswith("[class*=") or token.startswith("[id*=") or token.startswith("[data-") or token.startswith("[aria-"):
+        score += 250
+    if any(fragment in token for fragment in (" ", ">", "+", "~")):
+        score += 70
+
+    # Prefer concise reusable selectors over brittle long chains.
+    score -= min(len(token), 220) // 5
+    return score
+
+
+def _sort_exclude_selectors_by_priority(selectors, *, max_items: int):
+    triple_cap = max_items * 3 if isinstance(max_items, int) and max_items > 0 else 0
+    normalized = _normalize_selector_list(selectors, max_items=triple_cap)
+    unique = []
+    seen = set()
+    for selector in normalized:
+        lowered = str(selector or "").strip().lower()
+        if not lowered or lowered in seen:
+            continue
+        seen.add(lowered)
+        unique.append(selector)
+    unique.sort(
+        key=lambda selector: (
+            _exclude_selector_priority(selector),
+            -len(str(selector or "")),
+        ),
+        reverse=True,
+    )
+    if isinstance(max_items, int) and max_items > 0:
+        return unique[:max_items]
+    return unique
+
+
+def _merge_reading_mode_exclude_selectors(ai_exclude, heuristic_exclude, *, max_items: int):
+    baseline = _normalize_selector_list(READING_MODE_BASELINE_EXCLUDE_SELECTORS, max_items=max_items)
+    baseline_set = {str(selector or "").strip().lower() for selector in baseline}
+
+    heuristic_dynamic = [
+        selector
+        for selector in _normalize_selector_list(heuristic_exclude, max_items=max_items * 2)
+        if str(selector or "").strip().lower() not in baseline_set
+    ]
+    ai_dynamic = [
+        selector
+        for selector in _normalize_ai_exclude_selector_list(ai_exclude, max_items=max_items)
+        if str(selector or "").strip().lower() not in baseline_set
+    ]
+
+    ordered = []
+    ordered.extend(baseline)
+    ordered.extend(_sort_exclude_selectors_by_priority(ai_dynamic, max_items=max_items))
+    ordered.extend(_sort_exclude_selectors_by_priority(heuristic_dynamic, max_items=max_items))
+    return _normalize_selector_list(ordered, max_items=max_items)
+
+
+def _safe_css_simple_token(raw_value: str) -> str:
+    token = str(raw_value or "").strip()
+    if not token:
+        return ""
+    token = re.sub(r"[^A-Za-z0-9_-]", "", token)
+    if not token:
+        return ""
+    if not re.match(r"^[A-Za-z_][A-Za-z0-9_-]*$", token):
+        return ""
+    return token
+
+
+def _split_css_class_tokens(raw_value: str):
+    raw_tokens = str(raw_value or "").strip().split()
+    output = []
+    seen = set()
+    for raw_token in raw_tokens:
+        token = _safe_css_simple_token(raw_token)
+        if not token:
+            continue
+        lowered = token.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        output.append(token)
+        if len(output) >= 3:
+            break
+    return output
+
+
+def _build_selector_from_node(tag_name: str, node_id: str, node_class: str) -> str:
+    tag = str(tag_name or "").strip().lower()
+    if not re.match(r"^[a-z][a-z0-9]*$", tag):
+        tag = "div"
+
+    safe_id = _safe_css_simple_token(node_id)
+    if safe_id:
+        return f"#{safe_id}"
+
+    class_tokens = _split_css_class_tokens(node_class)
+    if class_tokens:
+        return f"{tag}" + "".join(f".{token}" for token in class_tokens[:2])
+
+    if tag in ("article", "main", "section"):
+        return tag
+    return ""
+
+
+def _score_reading_mode_candidate(tag: str, id_class_text: str, text_length: int) -> int:
+    score = int(text_length)
+    lowered_tag = str(tag or "").strip().lower()
+    lowered_text = str(id_class_text or "").strip().lower()
+
+    if lowered_tag in ("article", "main"):
+        score += 380
+    elif lowered_tag == "section":
+        score += 180
+    elif lowered_tag == "div":
+        score += 40
+
+    if any(hint in lowered_text for hint in READING_MODE_POSITIVE_HINTS):
+        score += 260
+    if any(hint in lowered_text for hint in READING_MODE_NEGATIVE_HINTS):
+        score -= 640
+    return score
+
+
+def _build_heuristic_reading_mode_plan(source_html: str):
+    include_candidates = []
+    exclude_candidates = []
+    seen_excludes = set()
+
+    try:
+        parser = lxml_html.HTMLParser(encoding="utf-8", recover=True)
+        root = lxml_html.fromstring(source_html, parser=parser)
+    except Exception as e:
+        return {
+            "include_selectors": ["main article", "article", "main", "[role='main']", "#content", ".article"],
+            "exclude_selectors": [
+                "nav", "header", "footer", "aside",
+                "[aria-label*='advert' i]", "[class*='ad-' i]", "[id*='ad-' i]",
+                "[class*='cookie' i]", "[id*='cookie' i]",
+                "[class*='consent' i]", "[id*='consent' i]",
+                "[class*='newsletter' i]", "[id*='newsletter' i]",
+                "[class*='related' i]", "[id*='related' i]",
+                "[class*='share' i]", "[id*='share' i]",
+            ],
+            "candidate_include": [],
+            "error": str(e)[:200],
+        }
+
+    for noisy in root.xpath("//script|//style|//noscript|//template|//svg|//canvas"):
+        parent = noisy.getparent()
+        if parent is not None:
+            parent.remove(noisy)
+
+    for node in root.iter():
+        tag = str(getattr(node, "tag", "") or "").lower()
+        if not tag or not re.match(r"^[a-z][a-z0-9]*$", tag):
+            continue
+        if tag in ("script", "style", "noscript", "template", "meta", "link"):
+            continue
+
+        node_id = str(node.get("id") or "")
+        node_class = str(node.get("class") or "")
+        id_class_text = f"{node_id} {node_class}".strip().lower()
+        selector = _build_selector_from_node(tag, node_id, node_class)
+        if not selector:
+            continue
+
+        text_content = " ".join(str(node.text_content() or "").split())
+        text_length = len(text_content)
+        if text_length < 120:
+            if any(hint in id_class_text for hint in READING_MODE_NEGATIVE_HINTS):
+                lowered = selector.lower()
+                if lowered not in seen_excludes:
+                    seen_excludes.add(lowered)
+                    exclude_candidates.append({
+                        "selector": selector,
+                        "priority": _exclude_selector_priority(selector),
+                        "text_length": text_length,
+                    })
+            continue
+
+        score = _score_reading_mode_candidate(tag, id_class_text, text_length)
+        include_candidates.append({
+            "selector": selector,
+            "tag": tag,
+            "text_length": text_length,
+            "score": score,
+        })
+
+        if any(hint in id_class_text for hint in READING_MODE_NEGATIVE_HINTS):
+            lowered = selector.lower()
+            if lowered not in seen_excludes:
+                seen_excludes.add(lowered)
+                exclude_candidates.append({
+                    "selector": selector,
+                    "priority": _exclude_selector_priority(selector),
+                    "text_length": text_length,
+                })
+
+    include_candidates.sort(key=lambda item: (int(item.get("score", 0)), int(item.get("text_length", 0))), reverse=True)
+
+    include_selectors = []
+    include_seen = set()
+    for candidate in include_candidates:
+        selector = str(candidate.get("selector") or "").strip()
+        if not selector:
+            continue
+        lowered = selector.lower()
+        if lowered in include_seen:
+            continue
+        if any(hint in lowered for hint in ("nav", "menu", "header", "footer", "cookie", "consent", "share", "related")):
+            continue
+        if int(candidate.get("score", 0)) < 220:
+            continue
+        include_seen.add(lowered)
+        include_selectors.append(selector)
+        if len(include_selectors) >= 6:
+            break
+
+    if not include_selectors:
+        include_selectors = ["main article", "article", "main", "[role='main']", "#content", ".article"]
+
+    exclude_candidates.sort(
+        key=lambda item: (
+            int(item.get("priority", 0)),
+            -int(item.get("text_length", 0)),
+        ),
+        reverse=True,
+    )
+    ordered_dynamic_excludes = [str(item.get("selector") or "").strip() for item in exclude_candidates]
+    exclude_selectors = _normalize_selector_list(
+        list(READING_MODE_BASELINE_EXCLUDE_SELECTORS) + ordered_dynamic_excludes,
+        max_items=READING_MODE_MAX_EXCLUDE_SELECTORS,
+    )
+
+    return {
+        "include_selectors": _normalize_selector_list(include_selectors, max_items=READING_MODE_MAX_INCLUDE_SELECTORS),
+        "exclude_selectors": exclude_selectors,
+        "candidate_include": include_candidates[:24],
+        "error": "",
+    }
+
+
+def _extract_relaxed_selector_array(raw_text: str, key_name: str):
+    text = str(raw_text or "")
+    key_match = re.search(rf'"{re.escape(key_name)}"\s*:\s*\[', text, flags=re.IGNORECASE)
+    if not key_match:
+        return []
+
+    cursor = key_match.end()
+    in_string = False
+    escape = False
+    current = ""
+    values = []
+    while cursor < len(text):
+        ch = text[cursor]
+        if in_string:
+            if escape:
+                current += ch
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == "\"":
+                token = current.strip()
+                if token:
+                    values.append(token)
+                current = ""
+                in_string = False
+            elif ch in ("\n", "\r"):
+                token = current.strip()
+                if token:
+                    values.append(token)
+                current = ""
+                break
+            else:
+                current += ch
+        else:
+            if ch == "]":
+                break
+            if ch == "\"":
+                in_string = True
+        cursor += 1
+
+    if in_string and current.strip():
+        values.append(current.strip())
+    return values
+
+
+def _parse_relaxed_reading_mode_payload(response_text: str):
+    text = _clean_ai_json_text(response_text)
+    include_values = _extract_relaxed_selector_array(text, "include_selectors")
+    exclude_values = _extract_relaxed_selector_array(text, "exclude_selectors")
+    notes_match = re.search(r'"notes"\s*:\s*"([^"\r\n]{0,400})', text, flags=re.IGNORECASE)
+    notes = str(notes_match.group(1) if notes_match else "").strip()
+    return {
+        "include_selectors": _normalize_selector_list(include_values, max_items=READING_MODE_MAX_INCLUDE_SELECTORS),
+        "exclude_selectors": _normalize_selector_list(exclude_values, max_items=READING_MODE_MAX_EXCLUDE_SELECTORS),
+        "notes": notes[:400],
+    }
 
 
 def _decode_data_url(data_url: str):
@@ -377,6 +1162,42 @@ def _iter_live_models():
             continue
         seen.add(token)
         yield token
+
+
+def _normalize_reading_mode_model_name(model_name: str) -> str:
+    token = str(model_name or "").strip()
+    if not token:
+        return ""
+    alias_map = {
+        "gemini-3.0-flash": "gemini-3-flash-preview",
+        "gemini-3-flash": "gemini-3-flash-preview",
+    }
+    return alias_map.get(token.lower(), token)
+
+
+def _iter_reading_mode_models():
+    ordered = [
+        _normalize_reading_mode_model_name(GEMINI_READING_MODE_MODEL),
+        "gemini-3-flash-preview",
+        "gemini-2.5-flash",
+        "gemini-flash-latest",
+    ]
+    seen = set()
+    for model_name in ordered:
+        token = str(model_name or "").strip()
+        if not token or token in seen:
+            continue
+        seen.add(token)
+        yield token
+
+
+def _model_supports_thinking_level(model_name: str) -> bool:
+    token = str(model_name or "").strip().lower()
+    if not token:
+        return False
+    # As of Feb 2026, reading mode's fallback flash models reject thinking_level,
+    # while Gemini 3 flash preview accepts it.
+    return token.startswith("gemini-3")
 
 
 def _extract_live_message_text(message):
@@ -652,7 +1473,24 @@ async def _run_live_query_with_fallbacks(
     raise RuntimeError("; ".join(attempts) if attempts else "No Gemini Live model is configured")
 
 
-def _generate_ai_json(client, parts, request_kind="generic", log_context=None):
+def _generate_ai_json(
+    client,
+    parts,
+    request_kind="generic",
+    log_context=None,
+    *,
+    model_name: str = "",
+    thinking_level: str = "",
+    max_output_tokens: int = 0,
+    temperature: float = None,
+    response_mime_type: str = "",
+    thinking_enabled: bool = True,
+    use_stream: bool = True,
+    response_schema=None,
+    response_json_schema=None,
+):
+    selected_model = str(model_name or GEMINI_MODEL).strip() or GEMINI_MODEL
+    selected_thinking_level = str(thinking_level or GEMINI_THINKING_LEVEL).strip() or GEMINI_THINKING_LEVEL
     request_id = uuid.uuid4().hex[:10]
     started_at = time.perf_counter()
     context = dict(log_context or {})
@@ -660,8 +1498,13 @@ def _generate_ai_json(client, parts, request_kind="generic", log_context=None):
         "request_start",
         request_id=request_id,
         request_kind=request_kind,
-        model=GEMINI_MODEL,
-        thinking_level=GEMINI_THINKING_LEVEL,
+        model=selected_model,
+        thinking_level=selected_thinking_level if thinking_enabled else "",
+        max_output_tokens=int(max_output_tokens or 0),
+        temperature=temperature if temperature is not None else "",
+        response_mime_type=str(response_mime_type or "").strip(),
+        use_stream=bool(use_stream),
+        has_response_schema=bool(response_schema or response_json_schema),
         **context,
     )
 
@@ -671,26 +1514,78 @@ def _generate_ai_json(client, parts, request_kind="generic", log_context=None):
             parts=parts,
         ),
     ]
-    generate_content_config = types.GenerateContentConfig(
-        thinking_config=types.ThinkingConfig(
-            thinking_level=GEMINI_THINKING_LEVEL,
-        ),
-    )
+    config_kwargs = {}
+    if thinking_enabled:
+        config_kwargs["thinking_config"] = types.ThinkingConfig(
+            thinking_level=selected_thinking_level,
+        )
+    if max_output_tokens and int(max_output_tokens) > 0:
+        config_kwargs["max_output_tokens"] = int(max_output_tokens)
+    if temperature is not None:
+        config_kwargs["temperature"] = float(temperature)
+    if response_mime_type:
+        config_kwargs["response_mime_type"] = str(response_mime_type).strip()
+    if response_schema is not None:
+        config_kwargs["response_schema"] = response_schema
+    if response_json_schema is not None:
+        config_kwargs["response_json_schema"] = response_json_schema
+    generate_content_config = types.GenerateContentConfig(**config_kwargs)
 
     response_text = ""
     chunk_count = 0
     try:
-        for chunk in client.models.generate_content_stream(
-            model=GEMINI_MODEL,
-            contents=contents,
-            config=generate_content_config,
-        ):
-            if chunk.text:
-                response_text += chunk.text
-                chunk_count += 1
+        if use_stream:
+            for chunk in client.models.generate_content_stream(
+                model=selected_model,
+                contents=contents,
+                config=generate_content_config,
+            ):
+                if chunk.text:
+                    response_text += chunk.text
+                    chunk_count += 1
 
-        response_text = _clean_ai_json_text(response_text)
-        parsed = json.loads(response_text)
+            response_text = _clean_ai_json_text(response_text)
+            try:
+                parsed = json.loads(response_text)
+            except json.JSONDecodeError:
+                extracted = _extract_first_json_object_text(response_text)
+                if not extracted:
+                    raise
+                parsed = json.loads(extracted)
+        else:
+            response = client.models.generate_content(
+                model=selected_model,
+                contents=contents,
+                config=generate_content_config,
+            )
+            chunk_count = 1
+            parsed = getattr(response, "parsed", None)
+            if isinstance(parsed, str):
+                parsed_text = _clean_ai_json_text(parsed)
+                try:
+                    parsed = json.loads(parsed_text)
+                except json.JSONDecodeError:
+                    extracted = _extract_first_json_object_text(parsed_text)
+                    if not extracted:
+                        raise
+                    parsed = json.loads(extracted)
+            if parsed is None:
+                response_text = _clean_ai_json_text(getattr(response, "text", "") or "")
+                try:
+                    parsed = json.loads(response_text)
+                except json.JSONDecodeError:
+                    extracted = _extract_first_json_object_text(response_text)
+                    if not extracted:
+                        raise
+                    parsed = json.loads(extracted)
+            elif hasattr(parsed, "model_dump"):
+                parsed = parsed.model_dump()
+            if not response_text:
+                try:
+                    response_text = json.dumps(parsed, ensure_ascii=True, separators=(",", ":"))
+                except Exception:
+                    response_text = str(parsed)
+
         duration_ms = round((time.perf_counter() - started_at) * 1000, 1)
         _log_gemini_event(
             "request_success",
@@ -703,6 +1598,20 @@ def _generate_ai_json(client, parts, request_kind="generic", log_context=None):
         )
         return parsed
     except Exception as e:
+        if request_kind == "reading_mode_plan" and response_text:
+            relaxed_payload = _parse_relaxed_reading_mode_payload(response_text)
+            if relaxed_payload.get("include_selectors"):
+                duration_ms = round((time.perf_counter() - started_at) * 1000, 1)
+                _log_gemini_event(
+                    "request_success_relaxed",
+                    request_id=request_id,
+                    request_kind=request_kind,
+                    duration_ms=duration_ms,
+                    response_chars=len(response_text),
+                    chunk_count=chunk_count,
+                    **context,
+                )
+                return relaxed_payload
         duration_ms = round((time.perf_counter() - started_at) * 1000, 1)
         _log_gemini_event(
             "request_error",
@@ -712,6 +1621,7 @@ def _generate_ai_json(client, parts, request_kind="generic", log_context=None):
             error_type=type(e).__name__,
             error_message=str(e)[:240],
             response_chars=len(response_text),
+            response_preview=response_text[:180],
             chunk_count=chunk_count,
             **context,
         )
@@ -1760,6 +2670,374 @@ def gemini_live_query():
             error_message=str(e)[:240],
         )
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/reading-mode-plan', methods=['POST', 'OPTIONS'])
+def reading_mode_plan():
+    """Generate CSS keep/remove selectors for AI-assisted reading mode."""
+    if request.method == 'OPTIONS':
+        return _set_cors_headers(jsonify({'ok': True}))
+
+    data = request.get_json(silent=True) or {}
+    page_url = str(data.get("pageUrl") or "").strip()
+    page_title = str(data.get("pageTitle") or "").strip()
+    source_html = str(data.get("htmlSource") or "")
+    original_html_chars = len(source_html)
+    visible_text_preview = str(data.get("visibleTextPreview") or "").strip()
+    force_ai_refinement = str(data.get("forceAiRefinement", "")).strip().lower() in ("1", "true", "yes", "on")
+    ai_refinement_enabled = bool(force_ai_refinement or GEMINI_READING_MODE_ENABLE_AI_REFINEMENT)
+
+    if not source_html:
+        return jsonify({'error': 'No page HTML provided'}), 400
+
+    source_html = source_html.replace("\x00", "")
+    truncated_input = False
+    if len(source_html) > GEMINI_READING_MODE_HTML_CHAR_LIMIT:
+        source_html = source_html[:GEMINI_READING_MODE_HTML_CHAR_LIMIT]
+        truncated_input = True
+
+    _log_reading_mode_event(
+        "request_received",
+        route="/reading-mode-plan",
+        page_host=_extract_host(page_url),
+        page_title_chars=len(page_title),
+        html_chars_original=original_html_chars,
+        html_chars_sent=len(source_html),
+        visible_text_chars=len(visible_text_preview),
+        force_ai_refinement=bool(force_ai_refinement),
+        ai_refinement_enabled=bool(ai_refinement_enabled),
+        selector_cap_disabled=bool(READING_MODE_DISABLE_SELECTOR_CAP),
+        max_include_selectors=int(READING_MODE_MAX_INCLUDE_SELECTORS),
+        max_exclude_selectors=int(READING_MODE_MAX_EXCLUDE_SELECTORS),
+        input_truncated=bool(truncated_input),
+    )
+
+    if ai_refinement_enabled:
+        url_cached_payload = _get_cached_reading_mode_plan_by_url(page_url)
+        if isinstance(url_cached_payload, dict) and url_cached_payload:
+            cached_debug = url_cached_payload.get("debug") if isinstance(url_cached_payload.get("debug"), dict) else {}
+            url_cached_payload["debug"] = {
+                **cached_debug,
+                "cacheHit": True,
+                "urlCacheHit": True,
+                "inputTruncated": bool(truncated_input),
+                "htmlChars": len(source_html),
+                "htmlCharsOriginal": original_html_chars,
+                "aiRefinementEnabled": bool(ai_refinement_enabled),
+                "forceAiRefinement": bool(force_ai_refinement),
+            }
+            _log_reading_mode_event(
+                "plan_url_cache_hit",
+                route="/reading-mode-plan",
+                model=str(url_cached_payload.get("model") or ""),
+                include_count=len(url_cached_payload.get("includeSelectors") or []),
+                exclude_count=len(url_cached_payload.get("excludeSelectors") or []),
+            )
+            return jsonify(url_cached_payload)
+
+    html_fingerprint = hashlib.sha1(source_html.encode("utf-8", errors="ignore")).hexdigest()
+    cache_key_seed = (
+        f"{page_url[:600]}|{page_title[:240]}|{len(source_html)}|{html_fingerprint}"
+        f"|force_ai={1 if force_ai_refinement else 0}|ai_enabled={1 if ai_refinement_enabled else 0}"
+    )
+    cache_key = hashlib.sha1(cache_key_seed.encode("utf-8")).hexdigest()
+    cached_payload = _get_cached_reading_mode_plan(cache_key)
+    if isinstance(cached_payload, dict) and cached_payload:
+        cached_debug = cached_payload.get("debug") if isinstance(cached_payload.get("debug"), dict) else {}
+        cached_payload["debug"] = {
+            **cached_debug,
+            "cacheHit": True,
+            "urlCacheHit": bool(cached_debug.get("urlCacheHit", False)),
+            "inputTruncated": bool(truncated_input),
+            "htmlChars": len(source_html),
+            "htmlCharsOriginal": original_html_chars,
+        }
+        _log_reading_mode_event(
+            "plan_cache_hit",
+            route="/reading-mode-plan",
+            model=str(cached_payload.get("model") or ""),
+            include_count=len(cached_payload.get("includeSelectors") or []),
+            exclude_count=len(cached_payload.get("excludeSelectors") or []),
+        )
+        return jsonify(cached_payload)
+
+    try:
+        heuristic_plan = _build_heuristic_reading_mode_plan(source_html)
+        heuristic_include = _normalize_selector_list(
+            heuristic_plan.get("include_selectors"),
+            max_items=READING_MODE_MAX_INCLUDE_SELECTORS,
+        )
+        heuristic_exclude = _normalize_selector_list(
+            heuristic_plan.get("exclude_selectors"),
+            max_items=READING_MODE_MAX_EXCLUDE_SELECTORS,
+        )
+        heuristic_candidates = heuristic_plan.get("candidate_include") if isinstance(heuristic_plan.get("candidate_include"), list) else []
+
+        _log_reading_mode_event(
+            "heuristic_plan_ready",
+            route="/reading-mode-plan",
+            include_count=len(heuristic_include),
+            exclude_count=len(heuristic_exclude),
+            candidate_count=len(heuristic_candidates),
+            heuristic_error=str(heuristic_plan.get("error") or "")[:200],
+        )
+
+        if not ai_refinement_enabled:
+            _log_reading_mode_event(
+                "ai_refinement_skipped",
+                route="/reading-mode-plan",
+                reason="disabled",
+            )
+            response_payload = {
+                "planVersion": READING_MODE_PLAN_CACHE_VERSION,
+                "includeSelectors": heuristic_include,
+                "excludeSelectors": heuristic_exclude,
+                "notes": "Applied heuristic reading mode plan.",
+                "model": "heuristic-only",
+                "debug": {
+                    "inputTruncated": bool(truncated_input),
+                    "htmlChars": len(source_html),
+                    "htmlCharsOriginal": original_html_chars,
+                    "fallbackUsed": False,
+                    "cacheHit": False,
+                    "urlCacheHit": False,
+                    "aiRefinementEnabled": bool(ai_refinement_enabled),
+                    "forceAiRefinement": bool(force_ai_refinement),
+                    "modelErrors": [],
+                },
+            }
+            _set_cached_reading_mode_plan(cache_key, response_payload)
+            _log_reading_mode_event(
+                "plan_ready",
+                route="/reading-mode-plan",
+                model="heuristic-only",
+                fallback_used=False,
+                include_count=len(heuristic_include),
+                exclude_count=len(heuristic_exclude),
+                notes_chars=len(response_payload["notes"]),
+                model_error_count=0,
+                input_truncated=bool(truncated_input),
+            )
+            return jsonify(response_payload)
+
+        selected_model = ""
+        model_errors = []
+        result = {}
+        client = None
+        if GEMINI_API_KEY:
+            try:
+                client = get_gemini_client()
+            except Exception as e:
+                model_errors.append(f"client_init: {type(e).__name__}: {str(e)[:180]}")
+                _log_reading_mode_event(
+                    "model_client_error",
+                    route="/reading-mode-plan",
+                    error_type=type(e).__name__,
+                    error_message=str(e)[:240],
+                )
+        else:
+            _log_reading_mode_event(
+                "ai_skipped",
+                route="/reading-mode-plan",
+                reason="missing_api_key",
+            )
+
+        if client is not None:
+            if READING_MODE_DISABLE_SELECTOR_CAP:
+                exclude_selector_limit_rule = "- exclude_selectors can contain as many selectors as needed for accurate clutter removal."
+            else:
+                exclude_selector_limit_rule = f"- exclude_selectors must contain 0 to {READING_MODE_MAX_EXCLUDE_SELECTORS} selectors for elements to hide inside kept containers."
+            prompt = f"""Return only a valid JSON object with this exact schema:
+{{
+  "include_selectors": ["..."],
+  "exclude_selectors": ["..."],
+  "notes": "..."
+}}
+
+Rules:
+- Output JSON only. No markdown, no code fences, no explanation.
+- include_selectors must contain 1 to 6 selectors for page containers to keep.
+{exclude_selector_limit_rule}
+- include_selectors must target broad readable containers (main article body), not tiny leaf nodes.
+- exclude_selectors must target clutter INSIDE kept containers only: related cards, promo blocks, tag chips, recommendation rails, newsletter boxes, share/social modules, ad/sponsored blocks.
+- Exclude topic/tag/taxonomy clusters and inline recommendation modules inside the article body.
+- Do not enumerate individual nav links, menu items, or one-off link selectors. Return concise reusable module selectors only.
+- Never use broad exclude selectors like: "div", "section", "article", "main", "p", "span", "*", "main *", "article *".
+- Never exclude core readable text containers or headings.
+- Never use these selectors: "*", "html", "body", ":root".
+- Do not include script/style/meta/link selectors.
+- Use selectors that are present in the provided page source.
+- Prefer stable selectors using id/class/attributes over volatile hashed classes.
+- If uncertain, keep the element (be conservative).
+
+Page URL: {page_url[:400]}
+Page title: {page_title[:400]}
+Visible text preview:
+{visible_text_preview[:5000] or "None."}
+
+Page source (HTML):
+```html
+{source_html}
+```
+"""
+
+            request_context = {
+                "route": "/reading-mode-plan",
+                "source": "webpage",
+                "page_host": _extract_host(page_url),
+                "page_title_chars": len(page_title),
+                "html_chars": len(source_html),
+                "html_chars_original": original_html_chars,
+                "visible_text_chars": len(visible_text_preview),
+                "input_truncated": bool(truncated_input),
+            }
+
+            candidate_models = list(_iter_reading_mode_models())
+            if force_ai_refinement:
+                # Forced refinement should still be responsive; try primary model only.
+                primary_model = candidate_models[0] if candidate_models else _normalize_reading_mode_model_name(GEMINI_READING_MODE_MODEL)
+                candidate_models = [primary_model] if primary_model else []
+
+            for candidate_model in candidate_models:
+                use_thinking = GEMINI_READING_MODE_USE_THINKING and _model_supports_thinking_level(candidate_model)
+                try:
+                    _log_reading_mode_event(
+                        "model_attempt",
+                        route="/reading-mode-plan",
+                        model=candidate_model,
+                        thinking_enabled=bool(use_thinking),
+                        thinking_level=GEMINI_READING_MODE_THINKING_LEVEL if use_thinking else "",
+                    )
+                    result = _generate_ai_json(
+                        client,
+                        [types.Part.from_text(text=prompt)],
+                        request_kind="reading_mode_plan",
+                        log_context=request_context,
+                        model_name=candidate_model,
+                        thinking_level=GEMINI_READING_MODE_THINKING_LEVEL if use_thinking else "",
+                        max_output_tokens=GEMINI_READING_MODE_MAX_OUTPUT_TOKENS,
+                        temperature=0.0,
+                        response_mime_type="application/json",
+                        thinking_enabled=use_thinking,
+                        use_stream=False,
+                    )
+                    selected_model = candidate_model
+                    break
+                except Exception as e:
+                    model_errors.append(f"{candidate_model}: {type(e).__name__}: {str(e)[:180]}")
+                    _log_reading_mode_event(
+                        "model_attempt_error",
+                        route="/reading-mode-plan",
+                        model=candidate_model,
+                        error_type=type(e).__name__,
+                        error_message=str(e)[:240],
+                    )
+
+        ai_include = _normalize_selector_list(
+            result.get("include_selectors") or result.get("includeSelectors"),
+            max_items=READING_MODE_MAX_INCLUDE_SELECTORS,
+        ) if isinstance(result, dict) else []
+        ai_exclude = _normalize_selector_list(
+            result.get("exclude_selectors") or result.get("excludeSelectors"),
+            max_items=READING_MODE_MAX_EXCLUDE_SELECTORS,
+        ) if isinstance(result, dict) else []
+        ai_exclude = _normalize_ai_exclude_selector_list(ai_exclude, max_items=READING_MODE_MAX_EXCLUDE_SELECTORS)
+        notes = str((result or {}).get("notes") or "").strip()[:400] if isinstance(result, dict) else ""
+
+        include_selectors = ai_include or heuristic_include
+        exclude_selectors = _merge_reading_mode_exclude_selectors(
+            ai_exclude,
+            heuristic_exclude,
+            max_items=READING_MODE_MAX_EXCLUDE_SELECTORS,
+        )
+        fallback_used = not bool(ai_include)
+        if fallback_used and not notes:
+            notes = "Applied heuristic reading mode plan."
+
+        model_token = selected_model or "heuristic-fallback"
+        ai_clutter_selector_count = sum(
+            1
+            for selector in ai_exclude
+            if any(hint in str(selector or "").lower() for hint in READING_MODE_CLUTTER_PRIORITY_HINTS)
+        )
+        final_clutter_selector_count = sum(
+            1
+            for selector in exclude_selectors
+            if any(hint in str(selector or "").lower() for hint in READING_MODE_CLUTTER_PRIORITY_HINTS)
+        )
+        _log_reading_mode_event(
+            "plan_ready",
+            route="/reading-mode-plan",
+            model=model_token,
+            fallback_used=bool(fallback_used),
+            include_count=len(include_selectors),
+            exclude_count=len(exclude_selectors),
+            ai_include_count=len(ai_include),
+            ai_exclude_count=len(ai_exclude),
+            heuristic_exclude_count=len(heuristic_exclude),
+            ai_clutter_selector_count=int(ai_clutter_selector_count),
+            final_clutter_selector_count=int(final_clutter_selector_count),
+            selector_cap_disabled=bool(READING_MODE_DISABLE_SELECTOR_CAP),
+            max_include_selectors=int(READING_MODE_MAX_INCLUDE_SELECTORS),
+            max_exclude_selectors=int(READING_MODE_MAX_EXCLUDE_SELECTORS),
+            notes_chars=len(notes),
+            model_error_count=len(model_errors),
+            input_truncated=bool(truncated_input),
+        )
+
+        response_payload = {
+            "planVersion": READING_MODE_PLAN_CACHE_VERSION,
+            "includeSelectors": include_selectors,
+            "excludeSelectors": exclude_selectors,
+            "notes": notes,
+            "model": model_token,
+            "debug": {
+                "inputTruncated": bool(truncated_input),
+                "htmlChars": len(source_html),
+                "htmlCharsOriginal": original_html_chars,
+                "fallbackUsed": bool(fallback_used),
+                "cacheHit": False,
+                "urlCacheHit": False,
+                "aiRefinementEnabled": bool(ai_refinement_enabled),
+                "forceAiRefinement": bool(force_ai_refinement),
+                "modelErrors": model_errors[:6],
+            },
+        }
+        _set_cached_reading_mode_plan(cache_key, response_payload)
+        model_token_lower = str(model_token or "").lower()
+        if model_token_lower.startswith("gemini"):
+            _set_cached_reading_mode_plan_by_url(page_url, response_payload)
+        return jsonify(response_payload)
+
+    except Exception as e:
+        _log_reading_mode_event(
+            "plan_error",
+            route="/reading-mode-plan",
+            error_type=type(e).__name__,
+            error_message=str(e)[:240],
+        )
+        fallback_include = ["main article", "article", "main", "[role='main']", "#content", ".article"]
+        fallback_exclude = ["nav", "header", "footer", "aside", "[class*='ad-' i]", "[class*='cookie' i]", "[class*='consent' i]"]
+        response_payload = {
+            "planVersion": READING_MODE_PLAN_CACHE_VERSION,
+            "includeSelectors": fallback_include,
+            "excludeSelectors": fallback_exclude,
+            "notes": "Applied fallback reading mode plan.",
+            "model": "emergency-fallback",
+            "debug": {
+                "inputTruncated": bool(truncated_input),
+                "htmlChars": len(source_html),
+                "htmlCharsOriginal": original_html_chars,
+                "fallbackUsed": True,
+                "cacheHit": False,
+                "urlCacheHit": False,
+                "aiRefinementEnabled": bool(ai_refinement_enabled),
+                "forceAiRefinement": bool(force_ai_refinement),
+                "routeError": f"{type(e).__name__}: {str(e)[:220]}",
+            },
+        }
+        _set_cached_reading_mode_plan(cache_key, response_payload)
+        return jsonify(response_payload)
 
 
 @app.route('/ring-event/push', methods=['POST', 'OPTIONS'])
