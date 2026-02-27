@@ -22,3 +22,6 @@ env/
 # Python tooling caches
 .pytest_cache/
 .mypy_cache/
+
+# Local runtime artifacts
+.run/
