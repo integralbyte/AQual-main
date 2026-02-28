@@ -1323,16 +1323,27 @@ function parseLearnVoiceIntent(text) {
     nine: "9",
     ten: "10"
   };
-  const normalized = normalizeSpeech(text)
+  const normalizedRaw = normalizeSpeech(text)
     .replace(/[.,!?;:]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-  if (!normalized) return null;
+  if (!normalizedRaw) return null;
 
-  // STT sometimes merges "open learn" into a single token.
-  if (/\bopenlearn\b/.test(normalized)) {
-    return { action: "open-learn" };
-  }
+  // STT often collapses "open ..." into one token; normalize those first.
+  const normalized = normalizedRaw
+    .replace(/\bopenlearn\b/g, "open learn")
+    .replace(/\bopenassessments?\b/g, "open assessments")
+    .replace(/\bopencourse\s*work([a-z0-9]+)?\b/g, (_match, suffix) => (
+      suffix ? `open coursework ${suffix}` : "open coursework"
+    ))
+    .replace(/\bopencoursework([a-z0-9]+)?\b/g, (_match, suffix) => (
+      suffix ? `open coursework ${suffix}` : "open coursework"
+    ))
+    .replace(/\bopencw([a-z0-9]+)?\b/g, (_match, suffix) => (
+      suffix ? `open cw ${suffix}` : "open cw"
+    ))
+    .replace(/\s+/g, " ")
+    .trim();
 
   if (normalized === "open learn") {
     return { action: "open-learn" };
@@ -1344,6 +1355,13 @@ function parseLearnVoiceIntent(text) {
 
   if (/\bopen\s+assessments?\b/.test(normalized)) {
     return { action: "open-assessments", query: "assessment" };
+  }
+
+  if (/\bopen\s+(?:the\s+)?(?:course\s*work|coursework|cw)\b/.test(normalized)) {
+    const explicitCoursework = normalized.match(/\bopen\s+(?:the\s+)?((?:course\s*work|coursework|cw)\s*[a-z0-9]+(?:\s+[a-z0-9]+)*)\b/i);
+    if (!explicitCoursework || !explicitCoursework[1]) {
+      return { action: "open-coursework", query: "coursework" };
+    }
   }
 
   const courseworkMatch = normalized.match(/\bopen\s+(?:the\s+)?((?:course\s*work|coursework|cw)\s*[a-z0-9]+(?:\s+[a-z0-9]+)*)\b/i);
@@ -1449,11 +1467,18 @@ function dispatchLearnIntentToTab(tabId, intent, retryCount = 14) {
   );
 }
 
-function maybeHandleLearnVoiceCommand(text) {
+function maybeHandleLearnVoiceCommand(text, activeTab = null) {
   const intent = parseLearnVoiceIntent(text);
   if (!intent) return false;
+  const activeTabUrl = activeTab && activeTab.url ? String(activeTab.url) : "";
+  const activeTabId = activeTab && activeTab.id ? Number(activeTab.id) : 0;
+  const onLearnTab = Boolean(activeTabUrl && isLearnTabUrl(activeTabUrl));
 
   if (intent.action === "open-learn") {
+    // If already on Learn, treat as handled without opening another tab.
+    if (onLearnTab) {
+      return true;
+    }
     const now = Date.now();
     if (lastVoiceCommand.key === LEARN_HOME_URL && now - lastVoiceCommand.timestamp < 4000) {
       return true;
@@ -1463,25 +1488,23 @@ function maybeHandleLearnVoiceCommand(text) {
     return true;
   }
 
-  chrome.tabs.query({ currentWindow: true }, (tabs) => {
-    const list = Array.isArray(tabs) ? tabs : [];
-    const activeLearnTab = list.find((tab) => tab && tab.active && tab.id && isLearnTabUrl(tab.url || ""));
-    const anyLearnTab = list.find((tab) => tab && tab.id && isLearnTabUrl(tab.url || ""));
-    const targetTab = activeLearnTab || anyLearnTab || null;
-
-    if (targetTab && targetTab.id) {
-      if (!targetTab.active) {
-        chrome.tabs.update(targetTab.id, { active: true });
-      }
-      dispatchLearnIntentToTab(targetTab.id, intent);
-      return;
-    }
-
-    pendingLearnIntent = { ...intent, queuedAt: Date.now() };
-    chrome.tabs.create({ url: LEARN_HOME_URL, active: true });
-  });
+  // Only allow generic Learn "open ..." actions when user is already on Learn.
+  if (!onLearnTab || !(activeTabId > 0)) {
+    return false;
+  }
+  dispatchLearnIntentToTab(activeTabId, intent);
 
   return true;
+}
+
+function isForcedOpenLearnCommand(text) {
+  const raw = String(text || "");
+  if (!raw) return false;
+  if (/openlearn/i.test(raw)) return true;
+
+  const normalized = normalizeSpeech(raw);
+  if (!normalized) return false;
+  return /\bopen\b[\s\w-]*\blearn\b/.test(normalized);
 }
 
 function extractGoogleQueryFromUrl(url) {

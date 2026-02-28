@@ -2597,6 +2597,81 @@ async function scrollLearnToBottom(maxPasses = 5) {
   }
 }
 
+function canLearnElementScrollY(element) {
+  if (!(element instanceof Element)) return false;
+  const style = window.getComputedStyle(element);
+  if (!style) return false;
+  const overflowY = String(style.overflowY || "").toLowerCase();
+  const allowsScroll = overflowY === "auto" || overflowY === "scroll" || overflowY === "overlay";
+  if (!allowsScroll) return false;
+  return element.scrollHeight > (element.clientHeight + 4);
+}
+
+function findLearnScrollContainer(preferredNode = null) {
+  let cursor = preferredNode instanceof Element ? preferredNode : null;
+  while (cursor) {
+    if (canLearnElementScrollY(cursor)) {
+      return cursor;
+    }
+    cursor = cursor.parentElement;
+  }
+
+  const fallbackCandidates = [
+    document.querySelector("main"),
+    document.querySelector("#site-wrap"),
+    document.querySelector("section"),
+    document.querySelector("body")
+  ];
+  for (let i = 0; i < fallbackCandidates.length; i += 1) {
+    if (canLearnElementScrollY(fallbackCandidates[i])) {
+      return fallbackCandidates[i];
+    }
+  }
+  return document.scrollingElement || document.documentElement || document.body;
+}
+
+function scrollLearnContainerBy(container, amountPx) {
+  const offset = Math.round(Number(amountPx) || 0);
+  if (!offset) return;
+  const scrollingRoot = document.scrollingElement || document.documentElement || document.body;
+  const isWindowRoot = (
+    !container
+    || container === scrollingRoot
+    || container === document.documentElement
+    || container === document.body
+  );
+
+  if (!isWindowRoot && container instanceof Element) {
+    try {
+      if (typeof container.scrollBy === "function") {
+        container.scrollBy({ top: offset, behavior: "smooth" });
+        return;
+      }
+    } catch (_error) {
+      // Fall through to direct scrollTop update.
+    }
+    container.scrollTop += offset;
+    return;
+  }
+
+  try {
+    window.scrollBy({ top: offset, behavior: "smooth" });
+  } catch (_error) {
+    window.scrollBy(0, offset);
+  }
+}
+
+async function scrollLearnAfterElementOpen(preferredNode = null) {
+  const firstStep = Math.max(460, Math.round(window.innerHeight * 0.62));
+  const secondStep = Math.max(180, Math.round(window.innerHeight * 0.26));
+  const firstTarget = findLearnScrollContainer(preferredNode);
+  scrollLearnContainerBy(firstTarget, firstStep);
+  await waitForLearnUi(1000);
+  const secondTarget = findLearnScrollContainer(preferredNode);
+  scrollLearnContainerBy(secondTarget, secondStep);
+  await waitForLearnUi(260);
+}
+
 function activateLearnElement(target) {
   if (!target) return "";
 
@@ -2811,6 +2886,124 @@ async function openLearnContentCardByQuery(query) {
   };
 }
 
+function collectLearnAssessmentFolderCandidates() {
+  const selectors = [
+    "button[data-analytics-id='content.item.folder.toggleFolder.button']",
+    "button[data-analytics-id*='content.item.folder.toggleFolder']",
+    "button.ax-focusable-title[aria-controls^='folder-contents-']",
+    "button.ax-focusable-title[aria-expanded]",
+    "button[id^='folder-title-'][aria-controls]"
+  ];
+  const seen = new Set();
+  const results = [];
+
+  selectors.forEach((selector) => {
+    let nodes = [];
+    try {
+      nodes = Array.from(document.querySelectorAll(selector));
+    } catch (_error) {
+      nodes = [];
+    }
+    nodes.forEach((button) => {
+      if (!(button instanceof Element) || seen.has(button) || isLearnReviewStateButton(button)) return;
+      seen.add(button);
+      if (!isElementLikelyVisible(button)) return;
+      const row = button.closest("[data-content-id], .itemContainer, .content-list-item, [class*='itemContainer'], li, article, section, div");
+      const label = [
+        button.getAttribute("aria-label") || "",
+        button.textContent || "",
+        row && row.textContent ? row.textContent : ""
+      ].join(" ").replace(/\s+/g, " ").trim();
+      results.push({
+        button,
+        row,
+        label
+      });
+    });
+  });
+
+  return results;
+}
+
+function pickLearnAssessmentFolderCandidate(query, fallbackKeyword = "assessment") {
+  const candidates = collectLearnAssessmentFolderCandidates();
+  if (!candidates.length) return null;
+
+  const normalizedQuery = normalizeLearnText(query);
+  const normalizedFallback = normalizeLearnText(fallbackKeyword);
+  let best = null;
+
+  for (let i = 0; i < candidates.length; i += 1) {
+    const candidate = candidates[i];
+    const labelNormalized = normalizeLearnText(candidate.label);
+    let score = normalizedQuery ? getLearnTextScore(normalizedQuery, candidate.label) : 0;
+    if (normalizedFallback && labelNormalized.includes(normalizedFallback)) {
+      score = Math.max(score, 0.95);
+    }
+    if (!best || score > best.score) {
+      best = { ...candidate, score };
+    }
+  }
+
+  if (!best) return null;
+  if (
+    normalizedQuery
+    && best.score < 0.22
+    && normalizedFallback
+    && !normalizeLearnText(best.label).includes(normalizedFallback)
+  ) {
+    return null;
+  }
+  return {
+    ...best,
+    score: Number(best.score.toFixed(3))
+  };
+}
+
+async function openLearnAssessmentFolderByQuery(query) {
+  const fallbackKeyword = "assessment";
+  const targetQuery = String(query || fallbackKeyword).trim() || fallbackKeyword;
+
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const candidate = pickLearnAssessmentFolderCandidate(targetQuery, fallbackKeyword);
+    if (candidate && candidate.button) {
+      const button = candidate.button;
+      try {
+        button.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+      } catch (_error) {
+        // Ignore scroll failures.
+      }
+      await waitForLearnUi(180);
+
+      const expanded = String(button.getAttribute("aria-expanded") || "").toLowerCase() === "true";
+      let url = "";
+      if (!expanded) {
+        url = activateLearnElement(button) || "";
+      } else {
+        try {
+          button.focus({ preventScroll: true });
+        } catch (_error) {
+          // Ignore focus failures.
+        }
+      }
+      return {
+        ok: true,
+        label: candidate.label,
+        score: candidate.score,
+        button,
+        row: candidate.row || null,
+        alreadyOpen: expanded,
+        url
+      };
+    }
+
+    await scrollLearnToBottom(2);
+    await waitForLearnUi(260);
+  }
+
+  return { ok: false, error: `No assessment folder matched "${targetQuery}".` };
+}
+
 const LEARN_ASSESSMENT_CARD_XPATH = "//*[@id=\"site-wrap\"]/div[2]/section/div/div/main/div/section/div/div[2]/div/div/course-content-outline/react-course-content-outline/div/div/div[1]/div[2]/div[*]";
 const LEARN_COURSEWORK_CARD_XPATH = "/html/body/div[1]/div[2]/section/div/div/main/div/section/div/div[2]/div/div/course-content-outline/react-course-content-outline/div/div/div[1]/div[2]/div[8]/div/div[2]/div/div/div/div/div[1]/div[2]/div[*]";
 const LEARN_COURSEWORK_FINAL_CLICK_XPATH = "/html/body/div[1]/div[2]/section/div/div/main/div/section/div/div[2]/div/div/course-content-outline/react-course-content-outline/div/div/div[1]/div[2]/div[8]/div/div[2]/div/div/div/div/div[1]/div[2]/div[5]/div/div[2]/div/div/div/div/div[1]/div[2]";
@@ -2844,18 +3037,42 @@ function getLearnNodeLabel(node) {
   ].join(" ").replace(/\s+/g, " ").trim();
 }
 
+function isLearnReviewStateButton(node) {
+  if (!(node instanceof Element) || !node.matches || !node.matches("button")) return false;
+  const className = String(node.className || "");
+  const analyticsId = String(node.getAttribute("data-analytics-id") || "").toLowerCase();
+  const role = String(node.getAttribute("role") || "").toLowerCase();
+  const ariaLabel = String(node.getAttribute("aria-label") || "").toLowerCase();
+  if (className.includes("js-review-state-icon-button")) return true;
+  if (analyticsId.includes("review-state-icon-button")) return true;
+  if (role === "checkbox" && ariaLabel.startsWith("status for")) return true;
+  return false;
+}
+
 function getLearnClickableNode(node) {
   if (!node) return null;
+  const preferredSelector = "button.ax-focusable-title, button[data-analytics-id*='content.item.folder.toggleFolder'], a.ax-focusable-title, a[data-analytics-id*='content.item'], a[data-analytics-id*='document.link'], a[href], button:not(.js-review-state-icon-button), [role='button'], [tabindex]";
+
+  if (isLearnReviewStateButton(node)) {
+    const parentRow = node.closest("[data-content-id], .itemContainer, .content-list-item, [class*='itemContainer'], li, article, section, div");
+    if (parentRow && parentRow !== node && parentRow.querySelector) {
+      const resolved = parentRow.querySelector(preferredSelector);
+      if (resolved && !isLearnReviewStateButton(resolved)) {
+        return resolved;
+      }
+    }
+  }
+
   if (
     node.matches
     && node.matches("a[href], button, [role='button'], [tabindex]")
+    && !isLearnReviewStateButton(node)
   ) {
     return node;
   }
   if (!node.querySelector) return null;
-  return node.querySelector(
-    "button.ax-focusable-title, a.ax-focusable-title, a[data-analytics-id*='content.item'], a[data-analytics-id*='document.link'], a[href], button, [role='button'], [tabindex]"
-  );
+  const found = node.querySelector(preferredSelector);
+  return found && !isLearnReviewStateButton(found) ? found : null;
 }
 
 function openLearnXPathCardByQuery(expression, query, fallbackKeyword = "") {
@@ -3028,13 +3245,24 @@ async function resolveLearnActionFromPayload(payload) {
   }
 
   if (action === "open-assessments") {
-    await scrollLearnToBottom(5);
+    await scrollLearnToBottom(6);
     const query = String(payload && payload.query ? payload.query : "assessment");
+    const folderOpened = await openLearnAssessmentFolderByQuery(query);
+    if (folderOpened.ok) {
+      await scrollLearnAfterElementOpen(folderOpened.row || folderOpened.button || null);
+      return {
+        ok: true,
+        action,
+        label: folderOpened.label,
+        url: folderOpened.url || ""
+      };
+    }
     const xpathOpened = openLearnXPathCardByQuery(LEARN_ASSESSMENT_CARD_XPATH, query, "assessment");
     const opened = xpathOpened.ok
       ? xpathOpened
       : await openLearnContentCardByQuery(query);
     if (!opened.ok) return opened;
+    await scrollLearnAfterElementOpen(opened.clickable || opened.node || opened.card || null);
     return {
       ok: true,
       action,
