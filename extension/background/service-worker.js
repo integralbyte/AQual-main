@@ -28,22 +28,124 @@ const DEFAULTS = {
   readingModeEnabled: false
 };
 
-function getSettings(callback) {
-  chrome.storage.sync.get(DEFAULTS, (stored) => {
-    callback({ ...DEFAULTS, ...(stored || {}), readingModeEnabled: false });
+const SITE_VISUAL_SETTINGS_KEY = "aqualSiteSettingsByDomain";
+const VISUAL_SETTING_KEYS = Object.keys(DEFAULTS).filter((key) => key !== "readingModeEnabled");
+const VISUAL_STORAGE_DEFAULTS = (() => {
+  const defaults = { [SITE_VISUAL_SETTINGS_KEY]: {} };
+  VISUAL_SETTING_KEYS.forEach((key) => {
+    defaults[key] = DEFAULTS[key];
+  });
+  return defaults;
+})();
+
+function normalizeDomainKeyFromHostname(hostname) {
+  let host = String(hostname || "").trim().toLowerCase();
+  if (!host) return "";
+  host = host.replace(/\.+$/g, "");
+  if (host.startsWith("www.")) {
+    host = host.slice(4);
+  }
+  return host;
+}
+
+function getDomainKeyFromUrl(rawUrl) {
+  if (!rawUrl) return "";
+  try {
+    const parsed = new URL(String(rawUrl));
+    if (!/^https?:$/i.test(parsed.protocol)) return "";
+    return normalizeDomainKeyFromHostname(parsed.hostname);
+  } catch (_error) {
+    return "";
+  }
+}
+
+function pickVisualSettingsPatch(input) {
+  const patch = {};
+  const source = input && typeof input === "object" ? input : {};
+  VISUAL_SETTING_KEYS.forEach((key) => {
+    if (Object.prototype.hasOwnProperty.call(source, key)) {
+      patch[key] = source[key];
+    }
+  });
+  return patch;
+}
+
+function getDomainVisualSettingsFromStored(stored, domainKey) {
+  const source = stored && typeof stored === "object" ? stored : {};
+  const mapRaw = source[SITE_VISUAL_SETTINGS_KEY];
+  const map = mapRaw && typeof mapRaw === "object" ? mapRaw : {};
+  const domainEntryRaw = domainKey && map[domainKey];
+  const domainEntry = domainEntryRaw && typeof domainEntryRaw === "object" ? domainEntryRaw : {};
+  const resolved = { ...DEFAULTS };
+  VISUAL_SETTING_KEYS.forEach((key) => {
+    if (Object.prototype.hasOwnProperty.call(domainEntry, key)) {
+      resolved[key] = domainEntry[key];
+    } else {
+      resolved[key] = DEFAULTS[key];
+    }
+  });
+  resolved.readingModeEnabled = false;
+  return resolved;
+}
+
+function getSettingsForUrl(url, callback) {
+  const domainKey = getDomainKeyFromUrl(url);
+  chrome.storage.sync.get(VISUAL_STORAGE_DEFAULTS, (stored) => {
+    callback(getDomainVisualSettingsFromStored(stored, domainKey));
   });
 }
 
-function sendToTab(tabId, settings) {
-  chrome.tabs.sendMessage(tabId, { type: "aqual-apply", settings }, () => {
+function updateSettingsForUrl(url, patch, callback, replace = false) {
+  const domainKey = getDomainKeyFromUrl(url);
+  if (!domainKey) {
+    const resolved = { ...DEFAULTS, ...pickVisualSettingsPatch(patch), readingModeEnabled: false };
+    callback(resolved, false);
+    return;
+  }
+
+  const safePatch = pickVisualSettingsPatch(patch);
+  chrome.storage.sync.get(VISUAL_STORAGE_DEFAULTS, (stored) => {
+    const current = stored && typeof stored === "object" ? stored : {};
+    const mapRaw = current[SITE_VISUAL_SETTINGS_KEY];
+    const map = mapRaw && typeof mapRaw === "object" ? mapRaw : {};
+    const existingEntryRaw = map[domainKey];
+    const existingEntry = existingEntryRaw && typeof existingEntryRaw === "object" ? existingEntryRaw : {};
+    const nextEntry = replace
+      ? { ...safePatch }
+      : { ...existingEntry, ...safePatch };
+    const nextMap = { ...map, [domainKey]: nextEntry };
+    chrome.storage.sync.set({ [SITE_VISUAL_SETTINGS_KEY]: nextMap }, () => {
+      const nextStored = { ...current, [SITE_VISUAL_SETTINGS_KEY]: nextMap };
+      callback(getDomainVisualSettingsFromStored(nextStored, domainKey), true);
+    });
+  });
+}
+
+function sendToTab(tabId, settings, meta = null) {
+  const message = { type: "aqual-apply", settings };
+  if (meta && typeof meta === "object") {
+    message.meta = meta;
+  }
+  chrome.tabs.sendMessage(tabId, message, () => {
     if (chrome.runtime.lastError) {
       return;
     }
   });
 }
 
-function applySettingsToTab(tabId) {
-  getSettings((settings) => sendToTab(tabId, settings));
+function applySettingsToTab(tabId, reason = "tab_sync") {
+  if (!Number.isFinite(tabId) || tabId <= 0) return;
+  chrome.tabs.get(tabId, (tab) => {
+    if (chrome.runtime.lastError || !tab) {
+      return;
+    }
+    getSettingsForUrl(tab.url || "", (settings) => {
+      sendToTab(tabId, settings, {
+        source: "service-worker",
+        reason
+      });
+    });
+  });
 }
 
 let liveAudioMode = null;
@@ -54,6 +156,21 @@ const FLIGHT_STT_LOCATION_CORRECTIONS = [
 const LEARN_HOME_URL = "https://www.learn.ed.ac.uk";
 const DOC_SERVER_BASE = "http://localhost:8080";
 const GEMINI_LIVE_ENDPOINT = `${DOC_SERVER_BASE}/gemini-live-query`;
+const FEATURE_TRACE_LOGS = true;
+
+function featureTrace(eventName, details) {
+  if (!FEATURE_TRACE_LOGS) return;
+  const payload = {
+    event: String(eventName || ""),
+    ts: Date.now(),
+    ...(details && typeof details === "object" ? details : {})
+  };
+  try {
+    console.info("[aqual-feature-trace]", JSON.stringify(payload));
+  } catch (_error) {
+    console.info("[aqual-feature-trace]", eventName, details || "");
+  }
+}
 
 function parseAudioMode(mode) {
   const token = String(mode || "").toLowerCase().replace(/[\s_-]+/g, "");
@@ -303,6 +420,11 @@ function toggleVoiceCommandMicFromRing(source = "ring", device = null) {
   const deviceLabel = device ? formatRingHidDeviceLabel(device) : "";
   if (holdActive) {
     stopAudioHoldSession(activeHoldId || 0);
+    featureTrace("voice_mic_toggle", {
+      source: sourceLabel,
+      enabled: false,
+      holdId: Number(activeHoldId || 0)
+    });
     localSet({
       aqualRingHidStatus: `${deviceLabel || "Ring"} mic OFF (${sourceLabel}).`,
       aqualRingHidLastToggleAt: Date.now()
@@ -316,17 +438,29 @@ function toggleVoiceCommandMicFromRing(source = "ring", device = null) {
 
   const holdId = Date.now();
   startAudioHoldSession(holdId);
+  featureTrace("voice_mic_toggle", {
+    source: sourceLabel,
+    enabled: true,
+    holdId: Number(holdId || 0)
+  });
   localSet({
     aqualRingHidStatus: `${deviceLabel || "Ring"} mic ON (${sourceLabel}).`,
     aqualRingHidLastToggleAt: Date.now()
   });
 }
 
-function shouldIgnoreBackendRingToggle(action) {
-  const actionKey = String(action || "").trim().toLowerCase() || "ring-action";
+function shouldIgnoreBackendRingToggle(action, buttonLabel = "") {
+  const actionKeyBase = String(action || "").trim().toLowerCase() || "ring-action";
+  const ringButton = String(buttonLabel || "").trim().toLowerCase();
+  const actionKey = ringButton ? `${actionKeyBase}:${ringButton}` : actionKeyBase;
   const now = Date.now();
   const lastAt = Number(backendRingLastToggleAtByAction.get(actionKey) || 0);
   if (now - lastAt < BACKEND_RING_TOGGLE_DEBOUNCE_MS) {
+    featureTrace("ring_backend_action_ignored", {
+      action: actionKeyBase,
+      buttonLabel: ringButton || "",
+      reason: "debounce"
+    });
     return true;
   }
   backendRingLastToggleAtByAction.set(actionKey, now);
@@ -335,6 +469,16 @@ function shouldIgnoreBackendRingToggle(action) {
 
 function isRingEventPollMessage(message) {
   return String(message && message.source ? message.source : "").trim().toLowerCase() === "ring-event-poll";
+}
+
+async function fetchRingBackendPoll(cursor = 0) {
+  const safeCursor = Math.max(0, Number(cursor) || 0);
+  const endpoint = `${DOC_SERVER_BASE}/ring-event/poll?cursor=${encodeURIComponent(String(safeCursor))}`;
+  const response = await fetch(endpoint, { method: "GET", cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`Ring backend poll failed (${response.status}).`);
+  }
+  return response.json();
 }
 
 function ringButtonPrefix(buttonLabel) {
@@ -349,28 +493,24 @@ function getRingTargetTabId(sender) {
   return 0;
 }
 
-function sendSettingsToRingTargetTab(settings, targetTabId = 0) {
-  if (Number.isFinite(targetTabId) && targetTabId > 0) {
-    sendToTab(targetTabId, settings);
-    return;
-  }
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    if (tabs && tabs.length && tabs[0] && typeof tabs[0].id === "number") {
-      sendToTab(tabs[0].id, settings);
-    }
-  });
-}
-
-function withResolvedTargetTabId(preferredTabId, callback) {
+function withResolvedTargetTab(preferredTabId, callback) {
   if (Number.isFinite(preferredTabId) && preferredTabId > 0) {
-    callback(preferredTabId);
+    chrome.tabs.get(preferredTabId, (tab) => {
+      if (chrome.runtime.lastError || !tab || typeof tab.id !== "number") {
+        callback(null);
+        return;
+      }
+      callback(tab);
+    });
     return;
   }
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const activeTab = tabs && tabs.length ? tabs[0] : null;
-    if (activeTab && typeof activeTab.id === "number") {
-      callback(activeTab.id);
+    if (!activeTab || typeof activeTab.id !== "number") {
+      callback(null);
+      return;
     }
+    callback(activeTab);
   });
 }
 
@@ -385,24 +525,53 @@ function toggleAccessibilitySettingFromRing(settingKey, featureLabel, source = "
   const sourceLabel = String(source || "ring");
   const buttonPrefix = ringButtonPrefix(buttonLabel);
   if (settingKey === "readingModeEnabled") {
-    getSettings((settings) => {
-      withResolvedTargetTabId(targetTabId, (resolvedTabId) => {
-        const previous = Boolean(readingModeStateByTab.get(resolvedTabId));
+    withResolvedTargetTab(targetTabId, (targetTab) => {
+      if (!targetTab || typeof targetTab.id !== "number") return;
+      getSettingsForUrl(targetTab.url || "", (settings) => {
+        const previous = Boolean(readingModeStateByTab.get(targetTab.id));
         const nextEnabled = !previous;
-        readingModeStateByTab.set(resolvedTabId, nextEnabled);
+        readingModeStateByTab.set(targetTab.id, nextEnabled);
         const nextSettings = { ...settings, readingModeEnabled: nextEnabled };
-        sendToTab(resolvedTabId, nextSettings);
+        sendToTab(targetTab.id, nextSettings, {
+          source: sourceLabel,
+          reason: "ring_toggle",
+          settingKey,
+          buttonLabel: String(buttonLabel || "")
+        });
+        featureTrace("visual_setting_toggle", {
+          settingKey,
+          enabled: nextEnabled,
+          source: sourceLabel,
+          tabId: targetTab.id,
+          buttonLabel: String(buttonLabel || "")
+        });
         setRingStatus(`Ring ${buttonPrefix}${featureLabel} ${nextEnabled ? "ON" : "OFF"} (${sourceLabel}).`);
       });
     });
     return;
   }
-  getSettings((settings) => {
-    const nextEnabled = !Boolean(settings[settingKey]);
-    settings[settingKey] = nextEnabled;
-    chrome.storage.sync.set({ [settingKey]: nextEnabled }, () => {
-      sendSettingsToRingTargetTab(settings, targetTabId);
-      setRingStatus(`Ring ${buttonPrefix}${featureLabel} ${nextEnabled ? "ON" : "OFF"} (${sourceLabel}).`);
+
+  withResolvedTargetTab(targetTabId, (targetTab) => {
+    if (!targetTab || typeof targetTab.id !== "number") return;
+    getSettingsForUrl(targetTab.url || "", (settings) => {
+      const nextEnabled = !Boolean(settings[settingKey]);
+      const patch = { [settingKey]: nextEnabled };
+      updateSettingsForUrl(targetTab.url || "", patch, (nextSettings) => {
+        sendToTab(targetTab.id, nextSettings, {
+          source: sourceLabel,
+          reason: "ring_toggle",
+          settingKey,
+          buttonLabel: String(buttonLabel || "")
+        });
+        featureTrace("visual_setting_toggle", {
+          settingKey,
+          enabled: nextEnabled,
+          source: sourceLabel,
+          tabId: targetTab.id,
+          buttonLabel: String(buttonLabel || "")
+        });
+        setRingStatus(`Ring ${buttonPrefix}${featureLabel} ${nextEnabled ? "ON" : "OFF"} (${sourceLabel}).`);
+      });
     });
   });
 }
@@ -436,21 +605,35 @@ function cycleRingSettingFromList({
   if (!Array.isArray(values) || values.length === 0) return;
   const sourceLabel = String(source || "ring");
   const buttonPrefix = ringButtonPrefix(buttonLabel);
-  getSettings((settings) => {
-    const currentValue = settings[settingKey];
-    const currentIndex = findRingCycleIndex(values, currentValue);
-    const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % values.length : 0;
-    const nextValue = values[nextIndex];
-    settings[settingKey] = nextValue;
-    const patch = { [settingKey]: nextValue };
-    if (forceEnableKey) {
-      settings[forceEnableKey] = true;
-      patch[forceEnableKey] = true;
-    }
-    chrome.storage.sync.set(patch, () => {
-      sendSettingsToRingTargetTab(settings, targetTabId);
-      const rawLabel = typeof valueFormatter === "function" ? valueFormatter(nextValue) : String(nextValue);
-      setRingStatus(`Ring ${buttonPrefix}${featureLabel}: ${rawLabel} (${sourceLabel}).`);
+
+  withResolvedTargetTab(targetTabId, (targetTab) => {
+    if (!targetTab || typeof targetTab.id !== "number") return;
+    getSettingsForUrl(targetTab.url || "", (settings) => {
+      const currentValue = settings[settingKey];
+      const currentIndex = findRingCycleIndex(values, currentValue);
+      const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % values.length : 0;
+      const nextValue = values[nextIndex];
+      const patch = { [settingKey]: nextValue };
+      if (forceEnableKey) {
+        patch[forceEnableKey] = true;
+      }
+      updateSettingsForUrl(targetTab.url || "", patch, (nextSettings) => {
+        sendToTab(targetTab.id, nextSettings, {
+          source: sourceLabel,
+          reason: "ring_cycle",
+          settingKey,
+          buttonLabel: String(buttonLabel || "")
+        });
+        featureTrace("visual_setting_cycle", {
+          settingKey,
+          value: nextValue,
+          source: sourceLabel,
+          tabId: targetTab.id,
+          buttonLabel: String(buttonLabel || "")
+        });
+        const rawLabel = typeof valueFormatter === "function" ? valueFormatter(nextValue) : String(nextValue);
+        setRingStatus(`Ring ${buttonPrefix}${featureLabel}: ${rawLabel} (${sourceLabel}).`);
+      });
     });
   });
 }
@@ -481,14 +664,75 @@ function sendRingCommandToTargetTab(payload, source = "ring-backend-monitor", bu
   });
 }
 
+function maybeHandleSkyscannerRingNavigationOverride(source = "ring-backend-monitor", buttonLabel = "", sender = null) {
+  const ringButton = String(buttonLabel || "").trim().toLowerCase();
+  const navAction = (ringButton === "top" || ringButton === "up")
+    ? "move-up"
+    : (ringButton === "bottom" || ringButton === "down")
+      ? "move-down"
+      : (ringButton === "center" || ringButton === "middle" || ringButton === "enter")
+        ? "activate"
+        : "";
+  if (!navAction) {
+    return false;
+  }
+
+  const tabId = getRingTargetTabId(sender);
+  const tabUrl = String(sender && sender.tab && sender.tab.url ? sender.tab.url : "");
+  if (!(Number.isFinite(tabId) && tabId > 0)) {
+    return false;
+  }
+  if (!tabUrl || !isSkyscannerFlightsTabUrl(tabUrl) || isSkyscannerConfigTabUrl(tabUrl)) {
+    return false;
+  }
+
+  const sourceLabel = String(source || "ring");
+  chrome.tabs.sendMessage(
+    tabId,
+    { type: "aqual-skyscanner-ring-nav", payload: { action: navAction } },
+    { frameId: 0 },
+    (response) => {
+      const hasRuntimeError = Boolean(chrome.runtime.lastError);
+      if (hasRuntimeError || !response || !response.ok) {
+        const errorText = !hasRuntimeError && response && response.error
+          ? String(response.error)
+          : "navigation unavailable";
+        setRingStatus(`Ring ${ringButtonPrefix(buttonLabel)}Skyscanner ${errorText} (${sourceLabel}).`);
+        return;
+      }
+      const actionLabel = navAction === "activate"
+        ? "select"
+        : navAction === "move-up"
+          ? "move up"
+          : "move down";
+      const position = Number.isFinite(Number(response.index)) && Number.isFinite(Number(response.total))
+        ? ` ${Number(response.index)}/${Number(response.total)}`
+        : "";
+      setRingStatus(`Ring ${ringButtonPrefix(buttonLabel)}Skyscanner ${actionLabel}${position} (${sourceLabel}).`);
+    }
+  );
+  return true;
+}
+
 function executeRingBackendAction(action, source = "ring-backend-monitor", buttonLabel = "", sender = null) {
   const actionToken = String(action || "").trim().toLowerCase();
+  const sourceLabel = String(source || "ring");
+  const targetTabId = getRingTargetTabId(sender);
   if (!actionToken || actionToken === "none") {
     return true;
   }
 
-  const sourceLabel = String(source || "ring");
-  const targetTabId = getRingTargetTabId(sender);
+  featureTrace("ring_backend_action_received", {
+    action: actionToken,
+    source: sourceLabel,
+    buttonLabel: String(buttonLabel || ""),
+    tabId: targetTabId
+  });
+
+  if (maybeHandleSkyscannerRingNavigationOverride(source, buttonLabel, sender)) {
+    return true;
+  }
+
   const toggleDescriptor = RING_ACTION_TOGGLE_MAP[actionToken];
   if (toggleDescriptor) {
     toggleAccessibilitySettingFromRing(
@@ -1930,7 +2174,68 @@ function parseSkyscannerProviderIntent(text) {
   return { action: "resolve-provider", providerKeyword: keyword };
 }
 
-function maybeHandleSkyscannerVoiceCommand(text) {
+function routeSkyscannerVoiceIntentForTab(activeTab, resultIntent, providerIntent) {
+  if (!activeTab || !activeTab.id || !isSkyscannerFlightsTabUrl(activeTab.url || "")) {
+    return false;
+  }
+
+  const onConfigPage = isSkyscannerConfigTabUrl(activeTab.url || "");
+  const payload = onConfigPage ? providerIntent : resultIntent;
+  if (!payload) return false;
+  console.info("[aqual-skyscanner-voice]", JSON.stringify({
+    event: "intent",
+    payload,
+    tabUrl: activeTab.url || "",
+    onConfigPage
+  }));
+
+  chrome.tabs.sendMessage(
+    activeTab.id,
+    { type: "aqual-skyscanner-action", payload },
+    { frameId: 0 },
+    (response) => {
+      if (chrome.runtime.lastError || !response || !response.ok || !response.url) {
+        console.warn("[aqual-skyscanner-voice]", JSON.stringify({
+          event: "resolve_failed",
+          error: chrome.runtime.lastError ? chrome.runtime.lastError.message : "",
+          response: response || null,
+          payload
+        }));
+        return;
+      }
+
+      const targetUrl = parseAbsoluteHttpUrl(response.url);
+      if (!targetUrl) {
+        console.warn("[aqual-skyscanner-voice]", JSON.stringify({
+          event: "invalid_url",
+          responseUrl: response.url,
+          payload
+        }));
+        return;
+      }
+
+      const now = Date.now();
+      if (lastVoiceCommand.key === targetUrl && now - lastVoiceCommand.timestamp < 4000) {
+        return;
+      }
+      lastVoiceCommand = { key: targetUrl, timestamp: now };
+
+      if (payload.action === "resolve-provider") {
+        chrome.tabs.create({
+          url: targetUrl,
+          active: true,
+          openerTabId: activeTab.id
+        });
+        return;
+      }
+
+      chrome.tabs.update(activeTab.id, { url: targetUrl });
+    }
+  );
+  return true;
+}
+
+function maybeHandleSkyscannerVoiceCommand(text, activeTab = null) {
   const normalized = normalizeSpeech(text);
   if (!normalized) return false;
 
@@ -1940,65 +2245,13 @@ function maybeHandleSkyscannerVoiceCommand(text) {
     return false;
   }
 
+  if (activeTab && typeof activeTab.id === "number") {
+    return routeSkyscannerVoiceIntentForTab(activeTab, resultIntent, providerIntent);
+  }
+
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const activeTab = tabs && tabs.length ? tabs[0] : null;
-    if (!activeTab || !activeTab.id || !isSkyscannerFlightsTabUrl(activeTab.url || "")) {
-      return;
-    }
-
-    const onConfigPage = isSkyscannerConfigTabUrl(activeTab.url || "");
-    const payload = onConfigPage ? providerIntent : resultIntent;
-    if (!payload) return;
-    console.info("[aqual-skyscanner-voice]", JSON.stringify({
-      event: "intent",
-      payload,
-      tabUrl: activeTab.url || "",
-      onConfigPage
-    }));
-
-    chrome.tabs.sendMessage(
-      activeTab.id,
-      { type: "aqual-skyscanner-action", payload },
-      { frameId: 0 },
-      (response) => {
-        if (chrome.runtime.lastError || !response || !response.ok || !response.url) {
-          console.warn("[aqual-skyscanner-voice]", JSON.stringify({
-            event: "resolve_failed",
-            error: chrome.runtime.lastError ? chrome.runtime.lastError.message : "",
-            response: response || null,
-            payload
-          }));
-          return;
-        }
-
-        const targetUrl = parseAbsoluteHttpUrl(response.url);
-        if (!targetUrl) {
-          console.warn("[aqual-skyscanner-voice]", JSON.stringify({
-            event: "invalid_url",
-            responseUrl: response.url,
-            payload
-          }));
-          return;
-        }
-
-        const now = Date.now();
-        if (lastVoiceCommand.key === targetUrl && now - lastVoiceCommand.timestamp < 4000) {
-          return;
-        }
-        lastVoiceCommand = { key: targetUrl, timestamp: now };
-
-        if (payload.action === "resolve-provider") {
-          chrome.tabs.create({
-            url: targetUrl,
-            active: true,
-            openerTabId: activeTab.id
-          });
-          return;
-        }
-
-        chrome.tabs.update(activeTab.id, { url: targetUrl });
-      }
-    );
+    routeSkyscannerVoiceIntentForTab(activeTab, resultIntent, providerIntent);
   });
 
   // Keep routing active so Google-specific intent parsing can still run in parallel
@@ -3443,7 +3696,7 @@ function parseVisualVoiceCommand(normalizedText, settings) {
   return result;
 }
 
-function applyVisualVoiceResult(result, settings) {
+function applyVisualVoiceResult(result, settings, activeTab = null) {
   const updates = result.updates || {};
   const persistedUpdates = { ...updates };
   const hasReadingModeUpdate = Object.prototype.hasOwnProperty.call(persistedUpdates, "readingModeEnabled");
@@ -3470,31 +3723,37 @@ function applyVisualVoiceResult(result, settings) {
     }
   };
 
-  const execute = () => {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      const activeTab = tabs && tabs.length ? tabs[0] : null;
-      if (activeTab && hasUpdates) {
-        const nextSettings = { ...settings, ...persistedUpdates };
-        if (hasReadingModeUpdate) {
-          nextSettings.readingModeEnabled = Boolean(updates.readingModeEnabled);
-          readingModeStateByTab.set(activeTab.id, Boolean(updates.readingModeEnabled));
-        }
-        sendToTab(activeTab.id, nextSettings);
+  const resolvedTab = activeTab && typeof activeTab.id === "number" ? activeTab : null;
+  const activeTabId = resolvedTab ? resolvedTab.id : 0;
+
+  const execute = (baseSettings) => {
+    const effectiveBase = baseSettings && typeof baseSettings === "object" ? baseSettings : settings;
+    if (activeTabId > 0 && hasUpdates) {
+      const nextSettings = { ...effectiveBase, ...persistedUpdates };
+      if (hasReadingModeUpdate) {
+        nextSettings.readingModeEnabled = Boolean(updates.readingModeEnabled);
+        readingModeStateByTab.set(activeTabId, Boolean(updates.readingModeEnabled));
       }
-      if (activeTab) {
-        performTabActions(activeTab.id);
-      }
-      if (result.actions.captureScreenshot) {
-        captureScreenshot();
-      }
-    });
+      sendToTab(activeTabId, nextSettings, {
+        source: "voice-command",
+        reason: "visual_command_apply"
+      });
+    }
+    if (activeTabId > 0) {
+      performTabActions(activeTabId);
+    }
+    if (result.actions.captureScreenshot) {
+      captureScreenshot();
+    }
   };
 
-  if (hasPersistedUpdates) {
-    chrome.storage.sync.set(persistedUpdates, execute);
-  } else {
-    execute();
+  if (hasPersistedUpdates && resolvedTab && resolvedTab.url) {
+    updateSettingsForUrl(resolvedTab.url, persistedUpdates, (nextSettings) => {
+      execute(nextSettings);
+    });
+    return;
   }
+  execute(settings);
 }
 
 function maybeHandleVisualVoiceCommand(text) {
@@ -3512,16 +3771,17 @@ function maybeHandleVisualVoiceCommand(text) {
     return false;
   }
 
-  getSettings((settings) => {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      const activeTab = tabs && tabs.length ? tabs[0] : null;
-      const tabId = activeTab && typeof activeTab.id === "number" ? activeTab.id : 0;
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    const activeTab = tabs && tabs.length ? tabs[0] : null;
+    const tabId = activeTab && typeof activeTab.id === "number" ? activeTab.id : 0;
+    const tabUrl = activeTab && activeTab.url ? activeTab.url : "";
+    getSettingsForUrl(tabUrl, (settings) => {
       if (tabId > 0) {
         settings.readingModeEnabled = Boolean(readingModeStateByTab.get(tabId));
       }
       const command = parseVisualVoiceCommand(normalized, settings);
       if (!command.handled) return;
-      applyVisualVoiceResult(command, settings);
+      applyVisualVoiceResult(command, settings, activeTab);
     });
   });
   return true;
@@ -5103,53 +5363,63 @@ async function handleGeminiLiveCapturedAudio(message) {
 
 function maybeHandleVoiceCommand(text) {
   if (!text) return;
-  if (maybeHandleLearnVoiceCommand(text)) {
-    return;
-  }
-  maybeHandleSkyscannerVoiceCommand(text);
-  if (maybeHandleGoogleSearchVoiceCommand(text)) {
-    return;
-  }
-  if (maybeHandleVisualVoiceCommand(text)) {
-    return;
-  }
-  if (containsOpenGoogle(text)) {
-    const now = Date.now();
-    if (lastVoiceCommand.key === "open google" && now - lastVoiceCommand.timestamp < 4000) {
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    const activeTab = tabs && tabs.length ? tabs[0] : null;
+
+    if (isForcedOpenLearnCommand(text)) {
+      maybeHandleLearnVoiceCommand("open learn", activeTab);
       return;
     }
-    lastVoiceCommand = { key: "open google", timestamp: now };
-    chrome.tabs.create({ url: "https://google.com" });
-    return;
-  }
-
-  const mapsRequest = parseMapsRequest(text);
-  if (mapsRequest) {
-    const originParam = mapsRequest.origin && mapsRequest.origin !== "My Location"
-      ? `origin=${encodeURIComponent(mapsRequest.origin)}&`
-      : "";
-    const url = `https://www.google.com/maps/dir/?api=1&${originParam}destination=${encodeURIComponent(mapsRequest.destination)}&travelmode=${mapsRequest.mode}`;
-    const now = Date.now();
-    if (lastVoiceCommand.key === url && now - lastVoiceCommand.timestamp < 4000) {
+    if (maybeHandleSkyscannerVoiceCommand(text, activeTab)) {
       return;
     }
-    lastVoiceCommand = { key: url, timestamp: now };
-    chrome.tabs.create({ url });
-    return;
-  }
+    if (maybeHandleLearnVoiceCommand(text, activeTab)) {
+      return;
+    }
+    if (maybeHandleGoogleSearchVoiceCommand(text)) {
+      return;
+    }
+    if (maybeHandleVisualVoiceCommand(text)) {
+      return;
+    }
+    if (containsOpenGoogle(text)) {
+      const now = Date.now();
+      if (lastVoiceCommand.key === "open google" && now - lastVoiceCommand.timestamp < 4000) {
+        return;
+      }
+      lastVoiceCommand = { key: "open google", timestamp: now };
+      chrome.tabs.create({ url: "https://google.com" });
+      return;
+    }
 
-  const flightBooking = extractFlightBooking(text, null);
-  if (flightBooking) {
-    const url = buildSkyscannerUrl(flightBooking);
-    if (url) {
+    const mapsRequest = parseMapsRequest(text);
+    if (mapsRequest) {
+      const originParam = mapsRequest.origin && mapsRequest.origin !== "My Location"
+        ? `origin=${encodeURIComponent(mapsRequest.origin)}&`
+        : "";
+      const url = `https://www.google.com/maps/dir/?api=1&${originParam}destination=${encodeURIComponent(mapsRequest.destination)}&travelmode=${mapsRequest.mode}`;
       const now = Date.now();
       if (lastVoiceCommand.key === url && now - lastVoiceCommand.timestamp < 4000) {
         return;
       }
       lastVoiceCommand = { key: url, timestamp: now };
       chrome.tabs.create({ url });
+      return;
     }
-  }
+
+    const flightBooking = extractFlightBooking(text, null);
+    if (flightBooking) {
+      const url = buildSkyscannerUrl(flightBooking);
+      if (url) {
+        const now = Date.now();
+        if (lastVoiceCommand.key === url && now - lastVoiceCommand.timestamp < 4000) {
+          return;
+        }
+        lastVoiceCommand = { key: url, timestamp: now };
+        chrome.tabs.create({ url });
+      }
+    }
+  });
 }
 
 function appendHoldTranscript(text) {
@@ -5330,7 +5600,6 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 chrome.runtime.onInstalled.addListener((details) => {
   chrome.storage.sync.set({ readingModeEnabled: false });
   if (details.reason === "install") {
-    chrome.storage.sync.set({ ...DEFAULTS });
     chrome.storage.local.set({
       aqualRingBackendPollingEnabled: true,
       aqualRingHidEnabled: false,
@@ -5352,7 +5621,7 @@ chrome.runtime.onStartup.addListener(() => {
 });
 
 chrome.tabs.onActivated.addListener((activeInfo) => {
-  applySettingsToTab(activeInfo.tabId);
+  applySettingsToTab(activeInfo.tabId, "tab_activated");
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
@@ -5361,7 +5630,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   }
   if (changeInfo.status === "complete") {
     readingModeStateByTab.delete(tabId);
-    applySettingsToTab(tabId);
+    applySettingsToTab(tabId, "tab_updated_complete");
     if (pendingLearnIntent && isLearnTabUrl((tab && tab.url) || "")) {
       const queued = pendingLearnIntent;
       pendingLearnIntent = null;
@@ -5382,41 +5651,61 @@ chrome.commands.onCommand.addListener((command) => {
     return;
   }
 
-  getSettings((settings) => {
-    let updates = {};
-    if (command === "toggle-image-veil") {
-      settings.imageVeilEnabled = !settings.imageVeilEnabled;
-      updates.imageVeilEnabled = settings.imageVeilEnabled;
-    }
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    const activeTab = tabs && tabs.length ? tabs[0] : null;
+    if (!activeTab || typeof activeTab.id !== "number") return;
+    getSettingsForUrl(activeTab.url || "", (settings) => {
+      let updates = {};
+      if (command === "toggle-image-veil") {
+        settings.imageVeilEnabled = !settings.imageVeilEnabled;
+        updates.imageVeilEnabled = settings.imageVeilEnabled;
+      }
 
-    if (command === "toggle-highlight-words") {
-      settings.highlightEnabled = !settings.highlightEnabled;
-      updates.highlightEnabled = settings.highlightEnabled;
-    }
+      if (command === "toggle-highlight-words") {
+        settings.highlightEnabled = !settings.highlightEnabled;
+        updates.highlightEnabled = settings.highlightEnabled;
+      }
 
-    if (command === "toggle-magnifier") {
-      settings.magnifierEnabled = !settings.magnifierEnabled;
-      updates.magnifierEnabled = settings.magnifierEnabled;
-    }
+      if (command === "toggle-magnifier") {
+        settings.magnifierEnabled = !settings.magnifierEnabled;
+        updates.magnifierEnabled = settings.magnifierEnabled;
+      }
 
-    if (command === "toggle-emphasize-links") {
-      settings.linkEmphasisEnabled = !settings.linkEmphasisEnabled;
-      updates.linkEmphasisEnabled = settings.linkEmphasisEnabled;
-    }
+      if (command === "toggle-emphasize-links") {
+        settings.linkEmphasisEnabled = !settings.linkEmphasisEnabled;
+        updates.linkEmphasisEnabled = settings.linkEmphasisEnabled;
+      }
 
-    if (Object.keys(updates).length > 0) {
-      chrome.storage.sync.set(updates, () => {
-        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-          if (!tabs || !tabs.length) return;
-          sendToTab(tabs[0].id, settings);
+      if (Object.keys(updates).length > 0) {
+        updateSettingsForUrl(activeTab.url || "", updates, (nextSettings) => {
+          sendToTab(activeTab.id, nextSettings, {
+            source: "keyboard-command",
+            reason: String(command || "command_toggle")
+          });
         });
-      });
-    }
+      }
+    });
   });
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message) return;
+  if (message.type === "aqual-get-settings-for-url") {
+    const targetUrl = String(message.url || "");
+    getSettingsForUrl(targetUrl, (settings) => {
+      sendResponse({ ok: true, settings });
+    });
+    return true;
+  }
+  if (message.type === "aqual-update-settings-for-url") {
+    const targetUrl = String(message.url || "");
+    const patch = message.patch && typeof message.patch === "object" ? message.patch : {};
+    const replace = Boolean(message.replace);
+    updateSettingsForUrl(targetUrl, patch, (settings, persisted) => {
+      sendResponse({ ok: true, settings, persisted: Boolean(persisted) });
+    }, replace);
+    return true;
+  }
   if (message.type === "aqual-reading-mode-state-update") {
     const tabId = sender && sender.tab && typeof sender.tab.id === "number" ? sender.tab.id : 0;
     if (tabId > 0) {
@@ -5438,6 +5727,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .then(() => sendResponse({ ok: true }))
       .catch((error) => {
         sendResponse({ ok: false, error: error && error.message ? error.message : String(error) });
+      });
+    return true;
+  }
+  if (message.type === "aqual-ring-backend-poll") {
+    fetchRingBackendPoll(message.cursor)
+      .then((data) => {
+        sendResponse({ ok: true, data: data && typeof data === "object" ? data : {} });
+      })
+      .catch((error) => {
+        sendResponse({ ok: false, error: error && error.message ? error.message : "Ring backend poll failed." });
       });
     return true;
   }
@@ -5469,7 +5768,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ ok: true, ignored: true, reason: "missing_action" });
       return false;
     }
-    if (shouldIgnoreBackendRingToggle(actionToken)) {
+    if (shouldIgnoreBackendRingToggle(actionToken, String(message.buttonLabel || ""))) {
       sendResponse({ ok: true, ignored: true });
       return false;
     }

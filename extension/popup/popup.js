@@ -203,6 +203,7 @@ let popupInitUiReady = false;
 let popupInitAssetsReady = false;
 let popupInitCompleted = false;
 let popupInitFinalizing = false;
+let activeSettingsUrl = "";
 
 let audioWs = null;
 let audioContext = null;
@@ -519,8 +520,67 @@ function renderSelectOptions(selectId, options, selected) {
   });
 }
 
+function getSiteSettingsFromResponse(response) {
+  if (response && response.ok && response.settings && typeof response.settings === "object") {
+    return { ...DEFAULTS, ...response.settings, readingModeEnabled: false };
+  }
+  return { ...DEFAULTS, readingModeEnabled: false };
+}
+
+function loadSiteSettingsForUrl(url, callback) {
+  activeSettingsUrl = String(url || "");
+  sendRuntimeMessage({ type: "aqual-get-settings-for-url", url: activeSettingsUrl }).then(({ response, error }) => {
+    if (error) {
+      callback({ ...DEFAULTS, readingModeEnabled: false });
+      return;
+    }
+    callback(getSiteSettingsFromResponse(response));
+  });
+}
+
+function loadSiteSettingsForActiveTab(callback) {
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    const activeBrowserTab = tabs && tabs.length ? tabs[0] : null;
+    const url = activeBrowserTab && activeBrowserTab.url ? String(activeBrowserTab.url) : "";
+    loadSiteSettingsForUrl(url, callback);
+  });
+}
+
 function persistSettings(partial) {
-  chrome.storage.sync.set(partial);
+  const patch = partial && typeof partial === "object" ? partial : {};
+  if (!Object.keys(patch).length) return;
+  if (!activeSettingsUrl) return;
+  chrome.runtime.sendMessage(
+    { type: "aqual-update-settings-for-url", url: activeSettingsUrl, patch },
+    () => {
+      if (chrome.runtime.lastError) {
+        // Ignore background update failures; popup state remains responsive.
+      }
+    }
+  );
+}
+
+function replaceSiteSettingsWithDefaults(callback) {
+  const nextDefaults = { ...DEFAULTS, readingModeEnabled: false };
+  if (!activeSettingsUrl) {
+    callback(nextDefaults);
+    return;
+  }
+  chrome.runtime.sendMessage(
+    {
+      type: "aqual-update-settings-for-url",
+      url: activeSettingsUrl,
+      patch: nextDefaults,
+      replace: true
+    },
+    (response) => {
+      if (chrome.runtime.lastError) {
+        callback(nextDefaults);
+        return;
+      }
+      callback(getSiteSettingsFromResponse(response));
+    }
+  );
 }
 
 function pushStateToActive() {
@@ -1527,9 +1587,9 @@ function bindEvents() {
       searchInput.value = "";
     }
     applyVisualSearchFilter("");
-    state = { ...DEFAULTS };
-    chrome.storage.sync.set({ ...DEFAULTS }, () => {
-      hydrateUI(state);
+    state = { ...DEFAULTS, readingModeEnabled: false };
+    replaceSiteSettingsWithDefaults((nextSettings) => {
+      hydrateUI(nextSettings);
       pushStateToActive();
     });
   });
@@ -1772,20 +1832,22 @@ document.addEventListener("DOMContentLoaded", () => {
       tryCompletePopupInit();
     });
 
-  chrome.storage.sync.get({ ...DEFAULTS, aqualRingButtonActions: RING_BUTTON_ACTION_DEFAULTS }, (stored) => {
-    hydrateUI(stored || {});
-    decorateControlTitlesWithIcons();
-    hydrateRingButtonActions(stored ? stored.aqualRingButtonActions : null);
-    setRingSettingsOpen(false);
-    setAboutPanelOpen(false);
-    bindEvents();
-    restoreUiState();
-    resizeAudioCanvas();
-    refreshMicPermissionState();
-    refreshRingHidState();
-    popupInitUiReady = true;
-    tryCompletePopupInit();
-    refreshReadingModeStateFromActiveTab();
+  loadSiteSettingsForActiveTab((siteSettings) => {
+    chrome.storage.sync.get({ aqualRingButtonActions: RING_BUTTON_ACTION_DEFAULTS }, (stored) => {
+      hydrateUI(siteSettings || {});
+      decorateControlTitlesWithIcons();
+      hydrateRingButtonActions(stored ? stored.aqualRingButtonActions : null);
+      setRingSettingsOpen(false);
+      setAboutPanelOpen(false);
+      bindEvents();
+      restoreUiState();
+      resizeAudioCanvas();
+      refreshMicPermissionState();
+      refreshRingHidState();
+      popupInitUiReady = true;
+      tryCompletePopupInit();
+      refreshReadingModeStateFromActiveTab();
+    });
   });
 
   chrome.storage.local.get({ aqualAudioMode: null }, (localStored) => {
@@ -1831,14 +1893,6 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         applyReadingModeStateText();
       }
-    }
-    if (area === "sync" && changes.highContrastEnabled) {
-      state.highContrastEnabled = Boolean(changes.highContrastEnabled.newValue);
-      const input = byId("highContrastEnabled");
-      if (input) {
-        input.checked = state.highContrastEnabled;
-      }
-      setToggleText("highContrastEnabledState", state.highContrastEnabled);
     }
     if (area === "sync" && changes.aqualRingButtonActions) {
       hydrateRingButtonActions(changes.aqualRingButtonActions.newValue);

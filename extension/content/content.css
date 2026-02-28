@@ -17,6 +17,14 @@
   cursor: crosshair !important;
 }
 
+.aqual-skyscanner-ring-target {
+  outline: 3px solid #22c55e !important;
+  outline-offset: 3px !important;
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.28) !important;
+  border-radius: 12px !important;
+  transition: outline-color 120ms ease, box-shadow 120ms ease !important;
+}
+
 .aqual-inline-image-described {
   box-shadow: 0 0 0 3px #fff3cd, 0 4px 12px rgba(0, 0, 0, 0.15) !important;
 }
