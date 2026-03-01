@@ -4371,22 +4371,65 @@ function extractNumericDayFromDateText(normalizedDateText) {
   return null;
 }
 
-function extractTwoDigitYearFromDateText(normalizedDateText) {
-  const fourDigit = normalizedDateText.match(/\b(19|20)\d{2}\b/);
+function getCurrentTwoDigitYear() {
+  return new Date().getFullYear() % 100;
+}
+
+function normalizeTwoDigitYearToken(rawYear) {
+  const token = String(rawYear || "").trim();
+  if (!token) return null;
+  const numeric = Number(token);
+  if (!Number.isFinite(numeric)) return null;
+  if (token.length >= 4) {
+    return Number(String(Math.trunc(numeric)).slice(-2));
+  }
+  if (numeric < 0 || numeric > 99) return null;
+  return Math.trunc(numeric);
+}
+
+function extractTwoDigitYearFromDateText(rawDateText, normalizedDateText) {
+  const raw = String(rawDateText || "");
+  const normalized = String(normalizedDateText || "").trim().toLowerCase();
+  const monthPattern = `(?:${DATE_MONTH_REGEX_SOURCE})`;
+
+  // Explicit four-digit year: "2026", "March 22 2026", "22 March 2026"
+  const fourDigit = raw.match(/\b(19|20)\d{2}\b/);
   if (fourDigit) {
     return Number(String(fourDigit[0]).slice(-2));
   }
-  const twoDigit = normalizedDateText.match(/\b(\d{2})\b/g);
-  if (!twoDigit || !twoDigit.length) {
-    return 26;
+
+  // Explicit year keyword: "year 26", "year 2026"
+  const yearKeyword = raw.match(/\byear\s+(\d{2,4})\b/i);
+  if (yearKeyword) {
+    const parsed = normalizeTwoDigitYearToken(yearKeyword[1]);
+    if (parsed !== null) return parsed;
   }
-  for (let i = 0; i < twoDigit.length; i += 1) {
-    const value = Number(twoDigit[i]);
-    if (value >= 24 && value <= 99) {
-      return value;
-    }
+
+  // Apostrophe year: "March 22 '26"
+  const apostropheYear = raw.match(/\b['’](\d{2})\b/);
+  if (apostropheYear) {
+    const parsed = normalizeTwoDigitYearToken(apostropheYear[1]);
+    if (parsed !== null) return parsed;
   }
-  return 26;
+
+  // Month/day with trailing year: "March 22 26" or "22 March 26"
+  const monthDayYear = normalized.match(
+    new RegExp(`\\b${monthPattern}\\s+\\d{1,2}(?:st|nd|rd|th)?\\s+(\\d{2,4})\\b`, "i")
+  );
+  if (monthDayYear) {
+    const parsed = normalizeTwoDigitYearToken(monthDayYear[1]);
+    if (parsed !== null) return parsed;
+  }
+  const dayMonthYear = normalized.match(
+    new RegExp(`\\b\\d{1,2}(?:st|nd|rd|th)?\\s*(?:of\\s+)?${monthPattern}\\s+(\\d{2,4})\\b`, "i")
+  );
+  if (dayMonthYear) {
+    const parsed = normalizeTwoDigitYearToken(dayMonthYear[1]);
+    if (parsed !== null) return parsed;
+  }
+
+  // No explicit year spoken: use current year.
+  return getCurrentTwoDigitYear();
 }
 
 function getCountryCode(country) {
@@ -4402,6 +4445,7 @@ function parseDate(dateStr) {
   const normalizedInput = normalizeDateTextInput(dateStr);
   const lower = normalizedInput.toLowerCase().trim();
   let day = null;
+  const currentYear = getCurrentTwoDigitYear();
 
   const yearFirstMatch = lower.match(/\b((?:19|20)\d{2})[\/\-.](\d{1,2})[\/\-.](\d{1,2})\b/);
   if (yearFirstMatch) {
@@ -4417,7 +4461,7 @@ function parseDate(dateStr) {
   if (numericMatch) {
     let first = Number(numericMatch[1]);
     let second = Number(numericMatch[2]);
-    let year = numericMatch[3] ? Number(numericMatch[3]) : 26;
+    let year = numericMatch[3] ? Number(numericMatch[3]) : currentYear;
     if (year > 99) {
       year = Number(String(year).slice(-2));
     }
@@ -4459,8 +4503,52 @@ function parseDate(dateStr) {
   const month = extractMonthFromDateText(lower);
   if (!month) return null;
 
-  const year = String(extractTwoDigitYearFromDateText(lower)).padStart(2, "0");
+  const year = String(extractTwoDigitYearFromDateText(dateStr, lower)).padStart(2, "0");
   return `${year}${month}${day}`;
+}
+
+function parseSkyscannerDateCodeToDate(dateCode) {
+  const token = String(dateCode || "").trim();
+  if (!/^\d{6}$/.test(token)) return null;
+  const year = 2000 + Number(token.slice(0, 2));
+  const month = Number(token.slice(2, 4));
+  const day = Number(token.slice(4, 6));
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return null;
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const parsed = new Date(year, month - 1, day);
+  if (parsed.getFullYear() !== year || (parsed.getMonth() + 1) !== month || parsed.getDate() !== day) {
+    return null;
+  }
+  return parsed;
+}
+
+function formatDateToSkyscannerCode(dateValue) {
+  if (!(dateValue instanceof Date) || Number.isNaN(dateValue.getTime())) return "";
+  const yy = String(dateValue.getFullYear() % 100).padStart(2, "0");
+  const mm = String(dateValue.getMonth() + 1).padStart(2, "0");
+  const dd = String(dateValue.getDate()).padStart(2, "0");
+  return `${yy}${mm}${dd}`;
+}
+
+function normalizeRoundTripDateOrder(departDateCode, returnDateCode) {
+  const departDate = parseSkyscannerDateCodeToDate(departDateCode);
+  const returnDate = parseSkyscannerDateCodeToDate(returnDateCode);
+  if (!departDate || !returnDate) {
+    return {
+      departDateCode,
+      returnDateCode
+    };
+  }
+
+  const adjustedReturn = new Date(returnDate.getTime());
+  while (adjustedReturn < departDate) {
+    adjustedReturn.setFullYear(adjustedReturn.getFullYear() + 1);
+  }
+
+  return {
+    departDateCode,
+    returnDateCode: formatDateToSkyscannerCode(adjustedReturn) || returnDateCode
+  };
 }
 
 function extractDates(text) {
@@ -4710,7 +4798,11 @@ function buildSkyscannerUrl(booking) {
     return null;
   }
 
-  return `https://www.skyscanner.net/transport/flights/${originCode}/${destCode}/${departDate}/${returnDate}/?adultsv2=1&cabinclass=economy&childrenv2=&ref=home&rtn=1&preferdirects=false&outboundaltsenabled=false&inboundaltsenabled=false`;
+  const normalizedRoundTrip = normalizeRoundTripDateOrder(departDate, returnDate);
+  const finalDepartDate = normalizedRoundTrip.departDateCode || departDate;
+  const finalReturnDate = normalizedRoundTrip.returnDateCode || returnDate;
+
+  return `https://www.skyscanner.net/transport/flights/${originCode}/${destCode}/${finalDepartDate}/${finalReturnDate}/?adultsv2=1&cabinclass=economy&childrenv2=&ref=home&rtn=1&preferdirects=false&outboundaltsenabled=false&inboundaltsenabled=false`;
 }
 
 async function ensureOffscreenDocument() {
