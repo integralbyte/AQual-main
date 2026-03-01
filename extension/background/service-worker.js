@@ -714,10 +714,48 @@ function maybeHandleSkyscannerRingNavigationOverride(source = "ring-backend-moni
   return true;
 }
 
+function maybeHandleGoogleDocsRingArrowOverride(source = "ring-backend-monitor", buttonLabel = "", sender = null) {
+  const ringButton = String(buttonLabel || "").trim().toLowerCase();
+  const keyAction = (ringButton === "left" || ringButton === "prev" || ringButton === "previous" || ringButton === "back")
+    ? "key_arrow_left"
+    : (ringButton === "right" || ringButton === "next" || ringButton === "forward")
+      ? "key_arrow_right"
+      : "";
+  if (!keyAction) {
+    return false;
+  }
+
+  const tabId = getRingTargetTabId(sender);
+  const tabUrl = String(sender && sender.tab && sender.tab.url ? sender.tab.url : "");
+  if (!(Number.isFinite(tabId) && tabId > 0)) {
+    return false;
+  }
+  if (!tabUrl || !isGoogleDocsTabUrl(tabUrl)) {
+    return false;
+  }
+
+  const statusLabel = keyAction === "key_arrow_left"
+    ? "Google Docs arrow left"
+    : "Google Docs arrow right";
+  sendRingCommandToTargetTab(
+    { type: "aqual-ring-key-command", action: keyAction },
+    source,
+    buttonLabel,
+    sender,
+    statusLabel
+  );
+  return true;
+}
+
 function executeRingBackendAction(action, source = "ring-backend-monitor", buttonLabel = "", sender = null) {
   const actionToken = String(action || "").trim().toLowerCase();
   const sourceLabel = String(source || "ring");
   const targetTabId = getRingTargetTabId(sender);
+
+  if (maybeHandleGoogleDocsRingArrowOverride(source, buttonLabel, sender)) {
+    return true;
+  }
+
   if (!actionToken || actionToken === "none") {
     return true;
   }
@@ -1943,6 +1981,17 @@ function isSkyscannerFlightsTabUrl(url) {
     const parsed = new URL(url);
     return parsed.hostname.toLowerCase().includes("skyscanner.")
       && parsed.pathname.includes("/transport/flights/");
+  } catch (_error) {
+    return false;
+  }
+}
+
+function isGoogleDocsTabUrl(url) {
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol.toLowerCase() === "https:"
+      && parsed.hostname.toLowerCase() === "docs.google.com";
   } catch (_error) {
     return false;
   }
