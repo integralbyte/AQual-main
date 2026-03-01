@@ -925,7 +925,7 @@ async function setReadingModeEnabled(enabled) {
   const requestId = ++readingModeRequestId;
   readingModeRequestInFlight = true;
   readingModeDebug("toggle_on", { requestId });
-  updateReadingModeStatus("loading", "Analysing page with Gemini Flash...");
+  updateReadingModeStatus("loading", "Analysing page to keep core content...");
 
   try {
     const plan = await fetchReadingModePlan();
@@ -3804,7 +3804,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (window.top !== window) {
       return;
     }
-    const statusText = String(message.status || "Gemini Live");
+    const statusText = String(message.status || "AQual Live");
     const detailText = String(message.detail || "");
     showGeminiLivePanel(statusText, detailText, { sticky: Boolean(message.sticky) });
   }
@@ -3819,10 +3819,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       const body = transcript
         ? `You said: ${transcript}\n\n${answer || "No answer returned."}`
         : (answer || "No answer returned.");
-      showGeminiLivePanel("Gemini Live response", body, { sticky: true, isError: false });
+      showGeminiLivePanel("AQual Live response", body, { sticky: true, isError: false });
     } else {
-      const error = String(message.error || "Gemini Live request failed.");
-      showGeminiLivePanel("Gemini Live error", error, { sticky: true, isError: true });
+      const error = String(message.error || "AQual Live request failed.");
+      showGeminiLivePanel("AQual Live error", error, { sticky: true, isError: true });
     }
   }
   if (message.type === "aqual-apply") {
@@ -4471,8 +4471,8 @@ function ensureGeminiLiveUi() {
     </style>
     <div class="card" role="status" aria-live="polite">
       <div class="head">
-        <span class="title">Gemini Live</span>
-        <button id="closeBtn" class="close" type="button" aria-label="Close Gemini Live panel">&times;</button>
+        <span class="title">AQual Live</span>
+        <button id="closeBtn" class="close" type="button" aria-label="Close AQual Live panel">&times;</button>
       </div>
       <div class="body">
         <div id="status" class="status"></div>
@@ -4504,8 +4504,12 @@ function showGeminiLivePanel(statusText, bodyText, options = {}) {
 
   const sticky = Boolean(options.sticky);
   const isError = Boolean(options.isError);
+  const rawStatus = String(statusText || "").trim();
+  const normalizedStatus = /^aqual\s+live$/i.test(rawStatus)
+    ? "Live call"
+    : (rawStatus || "Live call");
 
-  geminiLiveEls.status.textContent = String(statusText || "");
+  geminiLiveEls.status.textContent = normalizedStatus;
   geminiLiveEls.text.textContent = String(bodyText || "");
   geminiLiveEls.text.classList.toggle("error", isError);
   geminiLiveHost.style.display = "block";
@@ -4784,7 +4788,7 @@ document.addEventListener("keydown", (event) => {
     event.preventDefault();
     stopAudioHotkeySession();
     safeRuntimeMessage({ type: "aqual-gemini-live-toggle" });
-    showGeminiLivePanel("Gemini Live", "Toggling live call...", { sticky: false });
+    showGeminiLivePanel("AQual Live", "Toggling live call...", { sticky: false });
     return;
   }
 

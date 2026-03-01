@@ -88,7 +88,7 @@ const RING_BUTTON_ACTION_DEFAULTS = {
 };
 const RING_ACTION_OPTIONS = [
   { value: "toggle_voice_mic", label: "Toggle: Voice Commands mic" },
-  { value: "toggle_gemini_live", label: "Toggle: Gemini Live call" },
+  { value: "toggle_gemini_live", label: "Toggle: AQual Live call" },
   { value: "toggle_reading_mode", label: "Toggle: AI reading mode" },
   { value: "toggle_high_contrast", label: "Toggle: High contrast" },
   { value: "toggle_night_mode", label: "Toggle: Night reading mode" },
@@ -103,7 +103,7 @@ const RING_ACTION_OPTIONS = [
   { value: "toggle_cursor", label: "Toggle: Pointer style" },
   { value: "toggle_image_veil", label: "Toggle: Image veil" },
   { value: "toggle_highlight", label: "Toggle: Highlight words" },
-  { value: "toggle_line_guide", label: "Toggle: BeeLine line guide" },
+  { value: "toggle_line_guide", label: "Toggle: Line Guidance" },
   { value: "toggle_drawing", label: "Toggle: Draw on page" },
   { value: "toggle_magnifier", label: "Toggle: Magnifier" },
   { value: "cycle_color_vision", label: "Cycle: Colour vision mode" },
@@ -593,7 +593,7 @@ function pushStateToActive() {
     }, () => {
       if (!chrome.runtime.lastError) return;
       if (!state.readingModeEnabled) return;
-      setReadingModeStatusLocal("loading", "Analysing page with Gemini Flash...");
+      setReadingModeStatusLocal("loading", "Analysing page to keep core content...");
       scheduleReadingModeUnavailableFallback(sentAt);
     });
   });
@@ -1484,7 +1484,7 @@ function bindEvents() {
   byId("readingModeEnabled").addEventListener("change", (e) => {
     state.readingModeEnabled = e.target.checked;
     if (state.readingModeEnabled) {
-      setReadingModeStatusLocal("loading", "Analysing page with Gemini Flash...");
+      setReadingModeStatusLocal("loading", "Analysing page to keep core content...");
     } else {
       clearReadingModeUnavailableTimer();
       setReadingModeStatusLocal("disabled", "Reading mode is off.");

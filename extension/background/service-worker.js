@@ -301,7 +301,7 @@ const RING_ACTION_TOGGLE_MAP = {
   toggle_cursor: { key: "cursorEnabled", label: "pointer style" },
   toggle_image_veil: { key: "imageVeilEnabled", label: "image veil" },
   toggle_highlight: { key: "highlightEnabled", label: "highlight words" },
-  toggle_line_guide: { key: "lineGuideEnabled", label: "BeeLine line guide" },
+  toggle_line_guide: { key: "lineGuideEnabled", label: "Line Guidance" },
   toggle_drawing: { key: "drawingEnabled", label: "drawing mode" },
   toggle_magnifier: { key: "magnifierEnabled", label: "magnifier" }
 };
@@ -795,7 +795,7 @@ function executeRingBackendAction(action, source = "ring-backend-monitor", butto
     }
     geminiLiveLastToggleAt = now;
     toggleGeminiLiveCall(sender);
-    setRingStatus(`Ring ${ringButtonPrefix(buttonLabel)}Gemini Live call ${nextStateOn ? "ON" : "OFF"} (${sourceLabel}).`);
+    setRingStatus(`Ring ${ringButtonPrefix(buttonLabel)}AQual Live call ${nextStateOn ? "ON" : "OFF"} (${sourceLabel}).`);
     return true;
   }
 
@@ -4815,7 +4815,7 @@ async function ensureOffscreenDocument() {
     await chrome.offscreen.createDocument({
       url: "pages/offscreen-audio/offscreen-audio.html",
       reasons: ["USER_MEDIA", "AUDIO_PLAYBACK"],
-      justification: "Capture mic audio and play Gemini Live voice responses."
+      justification: "Capture mic audio and play AQual Live voice responses."
     });
   } catch (error) {
     // Ignore if offscreen creation fails; popup recording still works.
@@ -4957,7 +4957,7 @@ async function requestGeminiLiveResponse(payload, signal) {
     data = {};
   }
   if (!response.ok || (data && data.error)) {
-    throw new Error((data && data.error) || `Gemini Live request failed (${response.status})`);
+    throw new Error((data && data.error) || `AQual Live request failed (${response.status})`);
   }
   return data;
 }
@@ -5153,7 +5153,7 @@ async function processGeminiLiveQueue() {
         if (geminiLiveLastTabId) {
           sendGeminiLiveMessageToTab(geminiLiveLastTabId, {
             type: "aqual-gemini-live-status",
-            status: "Gemini Live",
+            status: "AQual Live",
             detail: `Live call chunk failed: ${error && error.message ? error.message : "unknown error"}`,
             sticky: true
           });
@@ -5199,7 +5199,7 @@ function startGeminiLiveCall(sender = null) {
 
   sendGeminiLiveMessageToTab(geminiLiveCallTabId, {
     type: "aqual-gemini-live-status",
-    status: "Gemini Live",
+    status: "AQual Live",
     detail: "Live call ON. Connecting...",
     sticky: true
   });
@@ -5264,7 +5264,7 @@ function stopGeminiLiveCall(reason = "Live call stopped.", notify = true) {
   if (notify && targetTabId) {
     sendGeminiLiveMessageToTab(targetTabId, {
       type: "aqual-gemini-live-status",
-      status: "Gemini Live",
+      status: "AQual Live",
       detail: reason,
       sticky: true
     });
@@ -5312,7 +5312,7 @@ function startGeminiLiveHoldSession(incomingHoldId = 0, sender = null) {
 
   sendGeminiLiveMessageToTab(senderTabId, {
     type: "aqual-gemini-live-status",
-    status: "Gemini Live",
+    status: "AQual Live",
     detail: "Listening... release Alt+D to send.",
     sticky: false
   });
@@ -5357,7 +5357,7 @@ function stopGeminiLiveHoldSession(incomingHoldId = 0, sender = null) {
 
   sendGeminiLiveMessageToTab(geminiLivePending.tabId || senderTabId, {
     type: "aqual-gemini-live-status",
-    status: "Gemini Live",
+    status: "AQual Live",
     detail: "Processing your question...",
     sticky: true
   });
@@ -5376,7 +5376,7 @@ function stopGeminiLiveHoldSession(incomingHoldId = 0, sender = null) {
     sendGeminiLiveMessageToTab(timedOut.tabId || 0, {
       type: "aqual-gemini-live-result",
       ok: false,
-      error: "Gemini Live capture timed out. Please try again."
+      error: "AQual Live capture timed out. Please try again."
     });
   }, 45000);
 }
@@ -5421,7 +5421,7 @@ async function handleGeminiLiveCapturedAudio(message) {
 
     sendGeminiLiveMessageToTab(tab && tab.id ? tab.id : pending.tabId, {
       type: "aqual-gemini-live-status",
-      status: "Gemini Live",
+      status: "AQual Live",
       detail: "Sending audio + screenshot to Gemini...",
       sticky: true
     });
@@ -5493,7 +5493,7 @@ async function handleGeminiLiveCapturedAudio(message) {
     sendGeminiLiveMessageToTab(pending.tabId || 0, {
       type: "aqual-gemini-live-result",
       ok: false,
-      error: error && error.message ? error.message : "Gemini Live request failed."
+      error: error && error.message ? error.message : "AQual Live request failed."
     });
   } finally {
     if (geminiLivePending && geminiLivePending.holdId === holdId) {
@@ -6058,7 +6058,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (transcriptText) {
         sendGeminiLiveMessageToTab(geminiLiveLastTabId, {
           type: "aqual-gemini-live-status",
-          status: "Gemini Live",
+          status: "AQual Live",
           detail: `You: ${transcriptText}`,
           sticky: true
         });
@@ -6081,23 +6081,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (state === "connecting" && geminiLiveLastTabId) {
       sendGeminiLiveMessageToTab(geminiLiveLastTabId, {
         type: "aqual-gemini-live-status",
-        status: "Gemini Live",
-        detail: "Connecting to Gemini Live...",
+        status: "AQual Live",
+        detail: "Connecting to AQual Live...",
         sticky: true
       });
     }
     if (state === "reconnecting" && geminiLiveLastTabId) {
       sendGeminiLiveMessageToTab(geminiLiveLastTabId, {
         type: "aqual-gemini-live-status",
-        status: "Gemini Live",
-        detail: "Reconnecting to Gemini Live...",
+        status: "AQual Live",
+        detail: "Reconnecting to AQual Live...",
         sticky: true
       });
     }
     if ((state === "ready" || state === "listening") && geminiLiveLastTabId) {
       sendGeminiLiveMessageToTab(geminiLiveLastTabId, {
         type: "aqual-gemini-live-status",
-        status: "Gemini Live",
+        status: "AQual Live",
         detail: "Live call ON. Listening...",
         sticky: true
       });
@@ -6105,7 +6105,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (state === "responding" && geminiLiveLastTabId) {
       sendGeminiLiveMessageToTab(geminiLiveLastTabId, {
         type: "aqual-gemini-live-status",
-        status: "Gemini Live",
+        status: "AQual Live",
         detail: "Gemini is responding...",
         sticky: true
       });
@@ -6113,7 +6113,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (state === "stopped" && geminiLiveLastTabId) {
       sendGeminiLiveMessageToTab(geminiLiveLastTabId, {
         type: "aqual-gemini-live-status",
-        status: "Gemini Live",
+        status: "AQual Live",
         detail: "Live call OFF.",
         sticky: true
       });
@@ -6141,7 +6141,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (state === "error" && geminiLiveLastTabId) {
       sendGeminiLiveMessageToTab(geminiLiveLastTabId, {
         type: "aqual-gemini-live-status",
-        status: "Gemini Live",
+        status: "AQual Live",
         detail: `Voice playback failed: ${errorText || "unknown error"}`,
         sticky: true
       });
